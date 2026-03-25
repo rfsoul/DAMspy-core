@@ -1,0 +1,22 @@
+# 1_Behringer SINAD smoketest.yaml
+
+# ─ Instrument selectors ─────────────────────────────────────────────────────────
+# These must match the keys in your location_config for EquipmentLoader
+sinad_meter:         Behringer_UMC202HD   # key under which the Behringer driver is instantiated
+# (If you later add RF signal generation to this smoke-test, you could also include:)
+# sig_gen:            tgr2051_sig_gen      # key for your TGR2051 signal generator
+
+# ─ Measurement signal (only if driving the radio via external sig-gen) ─────────
+# signal:
+#   frequency_hz:     485e6               # Hz
+#   deviation_hz:     1500                # Hz
+#   tone_hz:          1000                # Hz
+
+# ─ SINAD measurement parameters ────────────────────────────────────────────────
+#measurement_time_s:  10     # total duration (s) over which to average/read
+#sample_interval_s:   1      # seconds between each SINAD read
+#sample_rate: 44100
+min_sinad_db:        12.0   # pass threshold in dB
+#num_samps:   16384
+# ─ Optional CCITT weighting, etc (if your driver supports it) ───────────────────
+ccitt:              False

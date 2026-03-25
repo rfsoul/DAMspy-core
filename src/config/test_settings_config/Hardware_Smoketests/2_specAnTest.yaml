@@ -1,0 +1,5 @@
+center_frequency_hz: 2.555e9
+span_hz: 100e3
+reference_level_dbm: 10
+expected_peak_dbm: -10
+dwell_time_s: 3

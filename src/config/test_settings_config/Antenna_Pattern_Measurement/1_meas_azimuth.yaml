@@ -1,0 +1,21 @@
+axis: azimuth
+
+boresight_deg: 0
+max_angle_deg: 170
+step_deg: 2.5
+max_hold_seconds: 2
+
+sweep_mode: boresight_return
+
+height_m: 1.5
+polarisation: H
+DUT: "RXCC EV4 pos4 raised Ch40 Rx Horn WR340 HPol 2.5deg Max hold 2sec"
+dwell_s: 0
+lowest_level: -80
+
+tx:
+  source: hendrix          # future: vsg60
+  frequency_hz: 2440000000 #ch0  #2440000000 ch80
+  span_hz: 100000         # analyser zoom span
+  RBW: 10000              # Resolution BW  span
+  VBW: 10000              # Video BW span

@@ -1,0 +1,55 @@
+
+# SETI_Al/config/test_settings_config/ETSI_EN300086_CP50/7_rx_Adjacent_Channel_Selectivity.yaml
+#Note Aaron Fans report from 24th Oct 2020
+#and Mahruz report 6th Dec 2024
+#use
+#for MUS 20dB sinad CCITT on
+#Frequencies   459.075MHz 498.7MHz  519.2 MHz
+#Mus limit  -107dBm for 20dB sinad.   But this is conducted
+#ACS limit  60dB with wanted at -95dBm  at ambient and -95 at extreme temps wanted sinad 14dB
+
+frequency:   #wanted frequency
+  - 459.075
+  - 498.7
+  - 519.2
+
+Bandwidth:
+  - NB
+  - WB
+
+#Channel_spacing: 25 #12.5 25 #kHz   #not used
+
+wanted_signal_power:
+  levels: [-95]   #-101 at ambient   limit is 50   # at -20 and +60 its -95  limit 60
+  #levels: [-101,-95]
+
+#unwanted_signal_power:
+#  relative_level: [60, 63, 64, 65, 66, 67, 70, 73, 76, 79]   #relative to wanted signal power
+
+unwanted_signal_power:
+  relative_level: [ 40, 50, 60, 62, 63, 65, 67, 70, 73 ]   #relative to wanted signal power
+  #relative_level: [ 60, 65, 70, 73, 76, 79 ]   #relative to wanted signal power
+
+ccitt: true   #psophometric_weighting
+
+sinad_min : 14   #less than this stop measuring
+
+radio_voltage: 7.4
+
+temperature: 60
+
+this_test_abr: ACS  #BI  #  SRI
+
+log_script_prefix: 7_rx_Adjacent_Channel_Selectivity    #8_rx_blocking_immunity_results    #  9_rx_Spurious_Response_Immunity
+
+
+#sample_rate: 44100
+#no_samples: 16384
+
+
+
+#radio_volume:   #position at 9-10AM
+#    - 17.0
+
+#sinad_tolerance: 0.25
+

@@ -1,0 +1,50 @@
+
+    # ============================================================
+    # GP-STAR CONTEXT (for ChatGPT)
+    #
+    # This script analyses EMC emissions using three datasets:
+    #   1. RCV-S  (reference product)
+    #   2. RCV    (device under test)
+    #   3. Ambient (chamber baseline)
+    #
+    # All datasets contain max-hold SCPI CSVs with columns:
+    #     Freq_Hz, dBm
+    #
+    # ANTENNA FACTOR FILE:
+    #   File: "Bicolog30100 in path loss menu.csv"
+    #   Format:
+    #       No header row
+    #       Column 0 → frequency in MHz
+    #       Column 1 → antenna factor in dB/m
+    #
+    #   After loading:
+    #       df.columns = ["freq_MHz", "AF_dB_per_m"]
+    #       Convert to Hz: df["freq_Hz"] = df["freq_MHz"] * 1e6
+    #
+    # CABLE LOSS FILE:
+    #   File: "RX_Cable_Loss.csv"
+    #   Format:
+    #       Has headers
+    #       Columns:
+    #           Freq_MHz  → frequency in MHz
+    #           Loss_dB   → total cable loss in dB
+    #
+    #   Convert to Hz:
+    #       df["freq_Hz"] = df["Freq_MHz"] * 1e6
+    #
+    # CONVERSION TO FIELD-STRENGTH:
+    #   dBµV  = dBm + 107
+    #   dBµV/m = dBµV + AF(f) + CableLoss(f)
+    #
+    # INTERPOLATION RULES:
+    #   - Interpolate AF_dB_per_m by frequency (Hz)
+    #   - Interpolate Loss_dB by frequency (Hz)
+    #   - If interpolation exceeds bounds → clamp to nearest value
+    #
+    # DUT EMISSION CRITERION:
+    #   A frequency is considered a real DUT emission if:
+    #       (RCV_dBµV/m − Ambient_dBµV/m) > 3 dB
+    #
+    # FUTURE PLANNED:
+    #   - Compare chamber data with official pre-compliance PDF reports
+    # ============================================================

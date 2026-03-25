@@ -1,0 +1,50 @@
+---
+xrs335_config:
+
+  tolerance: 300 # Hz
+
+  frequency:
+    required: True
+    custom_array: [477e6] # Marine Channel 16, highest and lowest frequency channel
+    start:
+    stop:
+    step:
+
+  radio_power:
+    required: True
+    custom_array: ['0.1W']
+
+  #temperature:
+  #  required: False
+  #  custom_array:
+  #  start:
+  #  stop:
+  #  step:
+
+  radio_voltage:
+    required: True
+    custom_array: [13]
+    start:
+    stop:
+    step:
+
+  spec_an: #This is the Initial Setup
+    reset: True
+    display_on: True
+    analog_demod_on: False # Turn Analog Demodulation mode off
+    frequency_span: 10000 # Hz
+    internal_attenuation: 35 # dBm
+    resolution_bw: 100 # Hz
+    video_bw: 300 # Hz
+    rf_level: 50  # dBm
+    rf_level_offset: 30.3 #dBm
+    sweep_points: 10001
+    screenshot: True
+    continous_sweep: True
+    # trace_peak: 'DET_POS'
+
+
+
+    #notes
+    #limit +- 1.5kHz   frequency error and carrier pwoer measured over 700Hz
+...

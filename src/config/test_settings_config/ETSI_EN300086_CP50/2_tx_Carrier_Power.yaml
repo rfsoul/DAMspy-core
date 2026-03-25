@@ -1,0 +1,50 @@
+---
+xrs335_config:
+
+  power_high: 37 #dBm, transmitter power
+  power_low: 0 #dBm, transmitter power
+  power_ultralow: 20 #dBm
+  tolerance: 1.5 #dB tolerance from nominal power
+
+  frequency:
+    required: True
+    custom_array: [477e6] #[403e6, 450e6, 477e6, 503e6, 520e6]
+    start:
+    stop:
+    step:
+
+  radio_power:
+    required: True
+    custom_array: ['0.1W', '1W', '5W']# for xrs660 functional testing # ['LOW_PWR', 'HIGH_PWR']
+
+  temperature:
+    required: False
+    custom_array: [-20, 20, 60]
+    start:
+    stop:
+    step:
+
+  radio_voltage:
+    required: True
+    custom_array: [13]
+    start:
+    stop:
+    step:
+
+  spec_an: #This is the Initial Setup
+    reset: True
+    display_on: True
+    analog_demod_on: False # Turn Analog Demodulation mode off
+    frequency_span: 10000 # Hz
+    internal_attenuation: 35 # dBm
+    resolution_bw: 100 # Hz
+    video_bw: 300 # Hz
+    rf_level: 50  # dBm
+    rf_level_offset: 30.3 #dBm
+    sweep_points: 10001
+    screenshot: True
+    continous_sweep: True
+    # trace_peak: 'DET_POS'
+...
+    #notes
+    #limit +- 1.5kHz   frequency error and carrier power measured over 700Hz

@@ -1,0 +1,94 @@
+---
+xrs335_config:
+
+  standard: etsi_en300086
+  normal_test_mod: 1000 # 1000 Hz Tone
+  normal_fm_dev: 1500 # Hz
+  acp_test_mod: 1250 # test tone used in ACP test
+  tolerance_fm_dev: 20 # Hz
+  test_lfo_frequency: 1250 # lfo frequency
+  limit: -70  # acceptance criteria
+
+  frequency:
+    required: True
+    custom_array: [477e6] # Channel 24
+    start: 476.5e6
+    stop: 477.5e6
+    step: 0.05e6
+
+  radio:
+    mod: False # no modulation
+
+  radio_power:
+    required: True
+    custom_array: ['1W'] # set for xrs660 testing ['HIGH_PWR']  # test at high power
+
+  temperature:
+    required: False
+    custom_array:
+    start:
+    stop:
+    step:
+
+  radio_voltage:
+    required: True
+    custom_array: [13]
+    start:
+    stop:
+    step:
+
+  spec_an:
+    analog_demod:
+      reset: True
+      display_on: True
+      analog_demod_on: True # Turn Analog Demodulation mode on (Rather than Spectrum Analyse mode)
+      analog_demod_af_coupling: AC
+      analog_demod_meas_time: 10 # ms - Note: This seems like a long time - One of Aaron's settings
+      analog_demod_bw: 12.5e3 # kHz
+      deviation_per_div_trace_y: 1000 # Hz
+      # frequency_span: 1500 # Hz
+      internal_attenuation: 35 # dBm
+
+  #    resolution_bw: 300 # Hz
+  #    video_bw: 30 # Hz
+      rf_level: 50  # dBm
+      rf_level_offset: 30.3 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+  #    sweep_points: 10001
+      continous_sweep: True
+      screenshot: False
+      # trace_peak: 'DET_POS'
+    acp:
+      reset: True
+      display_on: True
+      acp_on: True
+      centre_frequency: 477000000 # CB radio channel 24
+      frequency_span: 120000 # for some reason can't use 120e3
+      resolution_bw: 100
+      video_bw: 300
+      rf_level: 40  # dBm
+      rf_level_offset: 30.3 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+      internal_attenuation: 20 # dBm
+      channel_bandwidth: 8500 #Hz
+      adjacent_channel_bandwidth: 8500 # 12.5kHz channel spacing
+      alternate_channel_bandwidth: 8500 # 12.5kHz channel spacing
+      adjacent_channel_number: 2
+      adjacent_channel_space: 12.5e3
+      alternate_channel_space: 25e3
+      power_mode: 'REL'
+      averaging_number: 50
+      screenshot: True
+      detector: 'RMS'
+      trace_peak: 'MINH'
+
+  sig_gen_1:
+    #fm_dev: 3000 # Hz
+    power:  # AF output power
+      looping_type: custom # Choose custom or auto depending on test. Custom means the looping is done within the test function
+      test_level: 20 #dB above the level which produces normal test modulation (i.e. 20dB is 10x the voltage)
+      start_mv: 1 #mV
+      min_mv: 0
+      max_mv: 50 #mV
+      step: 1
+
+    #notes
+    #limit +- 1.5kHz   frequency error and carrier power measured over 700Hz

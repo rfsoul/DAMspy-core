@@ -1,0 +1,71 @@
+---
+xrs335_config:
+
+  normal_test_mod: 1000 # 1000 Hz Tone standard test modulation
+  normal_fm_dev: 1500 # Hz standard test freq dev
+  tolerance_fm_dev: 50 # Hz (i.e. normal_fm_dev must be between 1.4 and 1.6 kHz)
+  gain_per_octave_dB: -14 #dB  log decay for out of band modulation frequency
+  # in-band modulation frequencies
+  lfo_frequency: [100, 300, 500, 700, 900, 1e3, 1.3e3, 1.5e3, 1.7e3, 1.9e3, 2e3, 2.3e3, 2.5e3, 2.7e3, 2.9e3, 3.0e3 ] # Hz
+  # out of band modulation frequencies
+  lfo_frequency_high : [3e3, 4e3, 5e3, 6e3, 7e3, 8e3, 9e3, 10e3, 12.5e3, 13e3, 15e3, 17e3, 19e3] # Hz
+  lf_freq_normal_range: [100, 6e3]  # according to EN300086 standard the Max Per Freq Dev is the same at 2550Hz
+  max_fm_dev_normal_range: 2550 # maximum permissible frequency deviation Hz
+  lf_freq_high_range: [6e3, 20e3]  # according to EN30086 standard, the MPFD is log decay
+  max_fm_dev_high_range: 1530 # At 6.0kHz, the deviation shall not be more than 30% of the max permissible freq. dev.
+
+  frequency:
+    required: True
+    custom_array: [477e6] # standard test RF frequency
+    start:
+    stop:
+    step:
+
+  radio_power:
+    required: True
+    custom_array: ['1W'] # set for xrs660 testing ['HIGH_PWR'] # LOW_PWR, HIGH_PWR
+
+  temperature:
+    required: False
+    custom_array:
+    start:
+    stop:
+    step:
+
+  radio_voltage:
+    required: True
+    custom_array: [13]
+    start:
+    stop:
+    step:
+
+  spec_an:
+    reset: True
+    display_on: True
+    analog_demod_on: True # Turn Analog Demodulation mode on (Rather than Spectrum Analyse mode)
+    analog_demod_af_coupling: AC
+    analog_demod_meas_time: 10 # ms - Note: This seems like a long time - One of Aaron's settings
+    analog_demod_bw: 12.5e3 # kHz
+
+    deviation_per_div_trace_y: 1000 # Hz
+    # frequency_span: 1500 # Hz
+    internal_attenuation: 35 # dBm
+
+#    resolution_bw: 300 # Hz
+#    video_bw: 30 # Hz
+    rf_level: 50  # dBm
+    rf_level_offset: 30.3 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+#    sweep_points: 10001
+    continous_sweep: True
+    screenshot: False
+    # trace_peak: 'DET_POS'
+
+  sig_gen_1:
+    #fm_dev: 3000 # Hz
+    power:
+      looping_type: custom # Choose custom or auto depending on test. Custom means the looping is done within the test function
+      test_level: 20 #dB above the level which produces normal test modulation (i.e. 20dB is 10x the voltage)
+      start_mv: 1 #mV
+      min_mv: 0  # XRS660 has a low input voltage. Type microphone input level is expected to be about 20mV
+      max_mv: 20 #mV
+      step: 1

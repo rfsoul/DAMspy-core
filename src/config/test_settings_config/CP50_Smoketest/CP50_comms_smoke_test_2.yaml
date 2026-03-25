@@ -1,0 +1,25 @@
+# config/test_settings_config/CP50_Smoketest/CP50_comms_smoke_test_1.yaml
+
+# 1) Which ADC channels to read (e.g. battery = 0, RSSI = 1)
+adc_channels:
+  - 0
+  - 1
+
+# 2) Channel-based tuning
+channel: 2
+channel_delay: 0.1       # seconds to wait after setting channel
+
+# 3) Transmit on/off
+pa_selection: 2
+modulation:
+  sel: 0
+  tone: 0
+tx_on_time: 5.0          # make this a float for consistency
+
+# 4) Direct-frequency tune
+frequency: 453250000.0   # explicitly a float in Hz
+freq_delay: 0.1          # seconds to wait after tuning
+
+# 5) Read ADCs again at tuned frequency
+rssi_reads: 3            # how many times to loop
+rssi_delay: 0.5          # seconds between each read

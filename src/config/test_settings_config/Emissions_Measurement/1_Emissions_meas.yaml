@@ -1,0 +1,10 @@
+az_degrees: [0] #[-90,-80,-70,-60,-50,-40,-30, -20,-10,0,10,20,30,40,50,60,70,80,90]  #[-90,-80,-70,-60,-50,-40,-30, -20,-10,0,10,20,30,40,50,60,70,80,90]  #[-90,-80,-70,-60,-50,-40,-30, -20,-10,0,10,20,30,40,50,60,70,80,90]         #Azimuth degrees
+rx_distance: [1.0,3.0]          #Distance from the centre of the positioner to the centre of the rx antenna
+tx_offset: 0.5                 #Distance from DUT to centre of positioner
+rx_heights: [1.0,1.5,2.0]    #Receive antenna height in metres
+rx_pol: ["H", "V"]          #Receive polarisation
+rx_ant: "Bicolog30100"      #receive antenna
+DUT: "RCV Sn2 Ambient"      #"RCV-S #10   1187"   #  RCV 1.5  Sn2 #RCVS off - Ambient
+antenna_factor_file: "C:/Users/ATE/Documents/SignalHound/Pathloss/Bicolog30100 in path loss menu.csv"
+path_loss_file: "C:/Users/ATE/Documents/SignalHound/Pathloss/RX_Cable_Loss.csv"
+

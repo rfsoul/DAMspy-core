@@ -1,0 +1,7 @@
+# SMC100A_smoketest.yaml
+
+# Target frequency (in Hz) for the SMC100A to output
+frequency_hz: 549250000
+
+# Output amplitude (in dBm) for the SMC100A
+power_dbm: -94

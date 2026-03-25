@@ -1,0 +1,25 @@
+current_location: Rf_control_room_minipc
+
+Rf_control_room_minipc:
+  equipment:
+
+    positioner:
+      driver: "equipment/positioner/Diamond_D6050.py"
+      class_name: "DiamondD6050"
+      port: COM3
+      baud: 57600
+      az_axis: Y
+      el_axis: X
+
+    spectrum_analyser:
+      spec_an_1:
+        driver: "equipment/spectrum_analyser/BBD60_Spike.py"
+        class_name: "BB60Spike"
+        host: "127.0.0.1"
+        port: 5025
+
+    signal_generator:
+      sig_gen_1:
+        driver: "equipment/signal_generator/Signal_Hound_VSG60A.py"
+        class_name: "Vsg60A"
+        manufacturer: "Signal Hound"

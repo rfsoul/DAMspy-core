@@ -1,0 +1,41 @@
+#Same as ACS but
+# 14db Sinad
+#ccitt on
+#e.m.f. of 6 dBμV which is -101dBm  (12dBuv is -95dBm)
+#+- 1MHZ standard says to also measure +- 2   ±1 MHz, ±2 MHz, ±5 MHz and ±10 MHz.
+#In Aarons test he only did +- 1MHz as the rest were better so he looked at it
+# but he did it for NB and WB
+#Can I change NB and WB in CP50?  not sure
+
+
+
+frequency:   #wanted frequency
+  - 459.075
+  - 498.7
+  - 519.2
+
+Bandwidth:
+  - NB
+  - WB
+
+this_test_abr: BI  #BI  #  SRI
+
+log_script_prefix: 8_rx_blocking_immunity_results  #7_rx_Adjacent_Channel_Selectivity    #8_rx_blocking_immunity_results    #  9_rx_Spurious_Response_Immunity
+
+
+Channel_spacing: 1000 #kHz
+
+wanted_signal_power:
+  levels: [-95]  #6 dBμV which is -101dBm  (12dBuv is -95dBm)
+
+unwanted_signal_power:
+  relative_level: [ 50, 60, 70, 80, 85, 90, 92, 94, 96, 98, 100]   #relative to wanted signal power   #limit is 80 at ambient
+
+ccitt: true   #psophometric_weighting
+
+sinad_min : 14   #less than this stop measuring   Pass is better than 80
+
+radio_voltage: 7.4
+
+temperature: 60
+

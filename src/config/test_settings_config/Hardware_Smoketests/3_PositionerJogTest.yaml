@@ -1,0 +1,6 @@
+# 3_PositionerJogTest.yaml
+
+az_jog_deg: 0      # degrees, +ve = one direction, -ve = the other
+el_jog_deg: 15      # set non-zero if you want to jog elevation too
+obey_limits: true  # use RYY (with limits) vs RY (ignore limits)
+settle_time_s: 2.0

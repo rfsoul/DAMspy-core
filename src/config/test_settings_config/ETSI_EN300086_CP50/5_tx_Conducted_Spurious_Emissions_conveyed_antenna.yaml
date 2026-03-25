@@ -1,0 +1,175 @@
+---
+xrs335_config:
+
+  frequency:
+    required: True
+    custom_array: [477e6]
+    start:
+    stop:
+    step:
+
+  radio_power:
+    required: True
+    custom_array: ['0.1W'] # set for xrs660 testing only ['HIGH_PWR']
+
+  temperature:
+    required: False
+    custom_array: [-20, 20, 60]
+    start:
+    stop:
+    step:
+
+  radio_voltage:
+    required: true
+    custom_array: [13]
+    start:
+    stop:
+    step:
+
+  spec_an:
+    reset: True
+    display_on: True
+    analog_demod_on: False # Turn Analog Demodulation mode off
+    frequency_span: 1500 # Hz
+    internal_attenuation: 35 # dBm
+    resolution_bw: 300 # Hz
+    video_bw: 30 # Hz
+    rf_level: 50  # dBm
+    rf_level_offset: 30.3 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+    sweep_points: 10001
+    screenshot: true
+    continous_sweep: True
+    trace_peak: 'DET_POS'
+
+    subrange_sweeps:
+      1:
+        reset: True
+        sweep_freq_range:
+          LOW: 9e3
+          HIGH: 150e3
+        filter: 'TX_NO_FILTER'
+        resolution_bw: 1e3
+        video_bw: 3e3
+        rf_level_offset: 0.1 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+        sweep_points: 10001
+        transducer:
+        - name: 'ETS_TX_LOSS_NOFILTER'
+          state: 'ON'
+        - name: 'ETS_TX_LOSS_700FILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_300FILTER'
+          state: 'OFF'
+        limit_line:
+          name: 'ASNZS4365_CONSPUR_TX'
+          state: 'ON'
+        limit: [-36, -57] #dBm
+        trace_peak: 'MAXH'
+        detector: 'DET_POS'
+        rf_level: -10  # dBm
+        internal_attenuation: 40 # dBm
+      #
+      2:
+        reset: True
+        sweep_freq_range:
+          LOW: 150e3
+          HIGH: 30e6
+        filter: 'TX_NO_FILTER'
+        resolution_bw: 10e3
+        video_bw: 30e3
+        rf_level_offset: 0.1 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+        sweep_points: 10001
+        transducer:
+        - name: 'ETS_TX_LOSS_NOFILTER'
+          state: 'ON'
+        - name: 'ETS_TX_LOSS_700FILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_300FILTER'
+          state: 'OFF'
+        limit_line:
+          name: 'ASNZS4365_CONSPUR_TX'
+          state: 'ON'
+        limit: [-36, -57] #dBm
+        trace_peak: 'MAXH'
+        detector: 'DET_POS'
+        rf_level: -20  # dBm
+        internal_attenuation: 20 # dBm
+      3:
+        reset: True
+        sweep_freq_range:
+          LOW: 30e6
+          HIGH: 270e6
+        filter: 'TX_NO_FILTER'
+        resolution_bw: 100e3
+        video_bw: 300e3
+        rf_level_offset: 30.5 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+        sweep_points: 10001
+        transducer:
+        - name: 'ETS_TX_LOSS_NOFILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_700FILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_300FILTER'
+          state: 'OFF'
+        limit_line:
+          name: 'ASNZS4365_CONSPUR_TX'
+          state: 'ON'
+        limit: [-36, -57] #dBm
+        trace_peak: 'MAXH'
+        detector: 'DET_POS'
+        screenshot: True
+        rf_level: 40.5  # dBm
+        internal_attenuation: 20 # dBm
+      4:
+        sweep_freq_range:
+          LOW: 270e6
+          HIGH: 1e9
+        filter: 'TX_HPF_300MHz'
+        resolution_bw: 1e6
+        video_bw: 3e6
+        rf_level_offset: 0.1 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+        sweep_points: 20001
+        transducer:
+        - name: 'ETS_TX_LOSS_NOFILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_700FILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_300FILTER'
+          state: 'ON'
+        limit_line:
+          name: 'ASNZS4365_CONSPUR_TX'
+          state: 'ON'
+        limit: [-36, -57] #dBm
+        trace_peak: 'MAXH'
+        detector: 'DET_POS'
+        screenshot: True
+        rf_level: -20 # dBm
+        internal_attenuation: 0 # dBm
+      5:
+        sweep_freq_range:
+          LOW: 1e9
+          HIGH: 3.6e9
+        filter: 'TX_HPF_300MHz'
+        resolution_bw: 1e6
+        video_bw: 3e6
+        rf_level_offset: 0.1 #dBm - NOTE: THIS WILL PROBABLY END UP BEING DYNAMIC...
+        sweep_points: 20001
+        transducer:
+        - name: 'ETS_TX_LOSS_NOFILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_700FILTER'
+          state: 'OFF'
+        - name: 'ETS_TX_LOSS_300FILTER'
+          state: 'ON'
+        limit_line:
+          name: 'ASNZS4365_CONSPUR_TX'
+          state: 'ON'
+        limit: [-30, -47] #dBm
+        trace_peak: 'MAXH'
+        detector: 'DET_POS'
+        screenshot: True
+        rf_level: -20 # dBm
+        internal_attenuation: 0 # dBm
+
+
+
+...

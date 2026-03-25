@@ -1,0 +1,21 @@
+{
+  "DUT": "RCVS off - Ambient",
+  "rx_ant": "Bicolog30100",
+  "pols": [
+    "H",
+    "V"
+  ],
+  "rx_distances": [
+    1.0,
+    3.0
+  ],
+  "rx_heights": [
+    1.0,
+    1.5,
+    2.0
+  ],
+  "az_degrees": [
+    0
+  ],
+  "mode": "MaxHoldOnly"
+}

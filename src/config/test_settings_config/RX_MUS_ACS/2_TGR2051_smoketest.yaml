@@ -1,0 +1,7 @@
+# 2_TGR2051_smoketest.yaml
+
+# Target frequency (in Hz) for the TGR2051 to output
+frequency_hz: 449250000
+
+# Output amplitude (in dBm) for the TGR2051
+amplitude_dbm: -114

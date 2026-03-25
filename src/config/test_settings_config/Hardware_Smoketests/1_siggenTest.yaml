@@ -1,0 +1,7 @@
+# 1_siggenTest.yaml
+frequency_hz: 2.555e9
+level_dbm: 0
+Sig_gen_settling_time_s: 3
+leave_rf_on: True
+
+

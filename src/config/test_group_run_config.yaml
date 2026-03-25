@@ -1,0 +1,29 @@
+current_test_group: Antenna_Pattern_Measurement    # must match folder name where test yamls live
+
+Hardware_Smoketests:
+  required_equipment:
+    - signal_generator.sig_gen_1
+    - spectrum_analyser
+    - positioner
+  tests:
+    - 1_siggenTest
+    - 2_specAnTest
+    - 3_PositionerJogTest
+
+Antenna_Pattern_Measurement:
+  required_equipment:
+    - positioner
+    - spectrum_analyser
+    #- signal_generator.sig_gen_1
+  tests:
+    - 1_meas_azimuth
+    # - 2_polar
+  test_postprocessing:
+    - 1_azimuth_polar_plot
+
+Emissions_Measurement:
+  required_equipment:
+    - positioner
+    - spectrum_analyser
+  tests:
+    - 1_Emissions_meas
