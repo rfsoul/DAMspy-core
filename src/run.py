@@ -9,6 +9,7 @@ DAMspy v17 – run.py (corrected FULL version)
 import importlib.util
 import yaml
 import os
+import sys
 from pathlib import Path
 from datetime import datetime
 from equipment.utils.equipment_loader import EquipmentLoader
@@ -56,6 +57,35 @@ def safe_copy(src: str, outdir: Path):
     else:
         print(f"[WARN] File not found: {src}")
 
+def resolve_runtime_mode(repo_root: Path) -> str:
+    localenv_path = repo_root / "operating_env" / ".localenv"
+
+    if not localenv_path.exists():
+        return "virtual"
+
+    try:
+        with open(localenv_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+
+                if not line or line.startswith("#"):
+                    continue
+
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+
+                if key == "DAMSPY_RUNTIME_MODE":
+                    return "real" if value == "real" else "virtual"
+
+    except Exception as e:
+        print(f"[WARN] Could not read {localenv_path}: {e}")
+        return "virtual"
+
+    return "virtual"
 
 # ----------------------------------------------------------
 # Main Execution
@@ -65,6 +95,18 @@ def main():
     print("\n=== DAMspy v17 Test Runner ===")
 
     root = Path(__file__).resolve().parent
+    repo_root = root.parent
+
+
+    runtime_mode = resolve_runtime_mode(repo_root)
+    print(f"[INFO] Runtime mode resolved: {runtime_mode}")
+
+    if runtime_mode != "real":
+        print("[INFO] Virtual runtime is not implemented yet.")
+        print("[INFO] Exiting before equipment initialization.")
+        sys.exit(0)
+
+
 
     # ---------------- Load Group Config ----------------
     group_cfg = load_yaml(root / "config" / "test_group_run_config.yaml")
