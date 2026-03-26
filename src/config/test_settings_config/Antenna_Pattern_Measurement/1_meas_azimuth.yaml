@@ -15,7 +15,7 @@ lowest_level: -80
 
 tx:
   source: hendrix          # future: vsg60
-  frequency_hz: 2440000000 #ch0  #2440000000 ch80
+  frequency_hz: 2400000000 #ch0  #2440000000 ch80
   span_hz: 100000         # analyser zoom span
   RBW: 10000              # Resolution BW  span
   VBW: 10000              # Video BW span
