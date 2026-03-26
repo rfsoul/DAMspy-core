@@ -1,237 +1,158 @@
 # Documentation Map
 
-This document describes the documentation structure for a **single-phase repository**.
+## Purpose
 
-It is the main navigation guide for humans and AI agents to understand:
+This document provides a navigation guide for the damspy-core repository.
 
-- where documentation lives
-- when each document should be read
-- how the repository is organised during default Phase 1 development
+It is intended for both humans and AI agents to understand:
 
-This doc map intentionally does **not** describe any Phase2+ documentation.
-
-If the project later continues beyond Phase 1, use the separate multi-phase doc map stored with the dormant Phase2+ template pack under:
-
-`docs/implementation/Phase2+_template/`
-
-Until then, those documents are dormant and can be ignored.
+- what documentation exists
+- which documents are active
+- how to interpret the repository structure
 
 ---
 
-# Repository Structure
+## Repository Status
 
-```text
-repo/
- ├─ AGENTS.md
- ├─ README.md
- ├─ doc_map.md
- ├─ Makefile
- ├─ tests/
- ├─ reference/
- └─ docs/
-     ├─ agent_commands.md
-     ├─ implementation/
-     │   ├─ implementation_strategy.md
-     │   └─ liveplan.md
-     └─ setup/
-         ├─ _getting_started.md
-         └─ short_description.md
-```
+damspy-core is an existing, working repository.
+
+It predates the ProjectX documentation structure.
+
+The current documentation is being **backfilled** to describe the working system and guide safe future development.
+
+Not all template documents are active or complete.
+
+If documentation conflicts with working code, treat the code as current truth.
 
 ---
 
-# Root Files
+## How to Use This Map
 
-### AGENTS.md
+When working in this repository:
 
-Purpose  
-Defines the AI development contract and repository behaviour rules.
+1. Start with:
+   - `README.md`
+   - `docs/setup/project_definition.md`
+   - `docs/implementation/implementation_strategy.md`
 
-Read when:
+2. Then consult additional documents only if relevant.
 
-- determining agent workflow rules
-- preparing code changes or pull requests
-- checking Prompt-ID, branch, or reporting requirements
+3. Do not assume that all template documents exist or are fully populated.
 
 ---
+
+## Root Files
 
 ### README.md
 
-Purpose  
-Describes the project from the perspective of a user, operator, or first-time repository reader.
+High-level description of the repository and how it is used.
 
-Read when:
-
-- understanding what the project is
-- checking the intended user-facing purpose
-- confirming that the implementation still matches the project intent
+Use this to understand what the system does and how it is run.
 
 ---
 
 ### doc_map.md
 
-Purpose  
-Provides the navigation guide for the repository documentation.
+This document.
 
-Read when:
-
-- determining which documents are relevant
-- locating setup or implementation documents
-- orienting a new human or AI contributor
-
----
-
-### Makefile
-
-Purpose  
-Defines repository commands used for development and validation.
-
-Primary validation command:
-
-`make ci`
-
-Read when:
-
-- repository validation must be executed
-- determining how automated checks are run
-- preparing to validate source code changes
-
-Agents should run `make ci` before creating pull requests that modify source code, unless repository documentation explicitly defines a different validation entrypoint.
-
----
-
-### tests/
-
-Purpose  
-Contains automated tests and validation scripts for the repository.
-
-Read when:
-
-- examining automated test coverage
-- validating implementation behaviour
-- updating tests to match code changes
-
-Tests are typically executed through:
-
-`make ci`
+Use this to determine which documentation is relevant.
 
 ---
 
 ### reference/
 
-Purpose  
-Contains technical guides, prior art, known-good examples, or supporting source material used to help shape the implementation.
+Contains authoritative reference material such as:
 
-Read when:
+- external interface definitions
+- protocol notes
+- historical or supporting material
 
-- implementation details need guidance
-- historical scripts or prior examples may be useful
-- the setup docs direct you to use reference material
+Reference documents may strongly influence implementation.
 
-`reference/` may contain high-authority implementation guidance for the repository. It should not silently override the active setup documents, but it is a normal input during Phase 1 planning and implementation.
-
----
-
-# docs/
-
-The `docs/` directory contains the active project documentation used during the default single-phase workflow.
-
-Documentation is divided into two areas:
-
-- **setup/** — documents that define the project before coding begins
-- **implementation/** — documents that define how the initial implementation will be built and tracked
+They should not be duplicated elsewhere.
 
 ---
 
-### agent_commands.md
-
-Purpose  
-Defines repository command keywords that may be invoked directly in prompts.
-
-This document is part of the repository control system and is read-only for agents.
-
-Read when:
-
-- a prompt consists solely of a supported command keyword
-- directed by command dispatch rules in `AGENTS.md`
-
-Agents must not modify this document unless explicitly instructed by a human.
-
----
-
-# docs/setup/
-
-Documents used to define and align the project before coding begins.
-
----
-
-### _getting_started.md
-
-Purpose  
-Defines the default Phase 1 startup flow for the repository.
-
-Read when:
-
-- starting a new repository
-- determining the order of documentation work
-- checking what should be done before coding begins
-
-This is the main guide for the Phase 1 setup process.
-
----
+## docs/setup/
 
 ### short_description.md
 
-Purpose  
-Captures the original project idea in concise high-level form.
+Brief orientation for the repository.
 
-Read when:
-
-- beginning a new project
-- checking the original intent of the repository
-- confirming that later docs still align with the starting idea
-
-This is the main source document for initial project intent.
+Provides a quick understanding of what damspy-core is.
 
 ---
 
-# docs/implementation/
+### project_definition.md
 
-Documents used to define and track the initial implementation.
+Defines the role and boundaries of damspy-core.
+
+Use this to understand:
+
+- what belongs in this repo
+- what does not
+- how it relates to other components
+
+---
+
+## docs/implementation/
+
+Only a subset of Phase2+ documents are currently active.
 
 ---
 
 ### implementation_strategy.md
 
-Purpose  
-Defines how the project will be built in its initial implementation phase.
+Defines how the repository should evolve from its current working state.
 
-This typically includes:
-
-- the chosen technical approach
-- intended runtime structure
-- first implementation shape
-- validation approach
-- important constraints or forbidden shortcuts
-
-Read when:
-
-- preparing to begin implementation
-- checking whether code changes still match the intended build approach
-- planning the first working version
+Use this when making changes to the system.
 
 ---
 
-### liveplan.md
+### external_interfaces.md
 
-Purpose  
-Tracks the minimum viable steps for the repository’s active implementation path.
+Describes how damspy-core interacts with external systems.
 
-Read when:
+Points to authoritative interface definitions in `reference/`.
 
-- determining the current project step
-- checking what should happen next
-- finding the prompt reference for a code step
-- recording whether the project finishes as single-phase or continues into Phase2+
+Use this when implementing integrations (e.g. rpicontrol).
 
-The liveplan is the execution map for active work.
+---
+
+### (Other Phase2+ Documents)
+
+Additional Phase2+ documents may exist or be introduced over time, including:
+
+- architecture.md
+- system_invariants.md
+- runbook.md
+- decisions.md
+- test_strategy.md
+
+These are not required to be complete at this stage.
+
+Only consult them if they exist and are relevant.
+
+---
+
+## Important Rules
+
+- This repository is not a greenfield design.
+- Do not assume all documentation is complete.
+- Do not invent missing structure based on templates.
+- Prefer existing working code paths over inferred architecture.
+- Add documentation only when it helps prevent confusion or unsafe changes.
+
+---
+
+## Summary
+
+Start with:
+
+- README.md  
+- project_definition.md  
+- implementation_strategy.md  
+
+Then expand only as needed.
+
+This repository prioritizes **working behaviour over documentation completeness**.

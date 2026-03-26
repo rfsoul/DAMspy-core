@@ -3,6 +3,22 @@
 ## Content
 
 
+damspy-core is the operational core repository for DAMspy measurement execution.
+
+It runs configured RF / EMC / chamber-style test workflows by coordinating lab equipment, motion systems, test methods, and output generation. The repository is already functional and produces useful measurement results in real lab use.
+
+This repository predates the ProjectX documentation structure. The current documentation is being backfilled to describe the working system and guide safe future development. It should not be interpreted as a greenfield design or a fully re-architected system.
+
+Near-term development includes integration with damspy-rpicontrol for external RXCC-related control. Longer-term, richer GUI and operator-control concerns are expected to live outside this repo (e.g. damspy-vc), while damspy-core remains focused on measurement orchestration and execution.
+
+Current guidance:
+
+- prefer incremental improvement over full rewrites
+- preserve existing working measurement behaviour
+- keep hardware and external service integrations explicit and contained
+- do not assume all ProjectX template documents are active or complete
+- if documentation conflicts with working code, treat the code as current truth and update the docs accordingly
+
 ---
 
 ## Editing Guidelines (Do Not Modify Below This Line)
