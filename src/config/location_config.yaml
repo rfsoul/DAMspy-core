@@ -4,12 +4,13 @@ Rf_control_room_minipc:
   equipment:
 
     positioner:
-      driver: "equipment/positioner/Diamond_D6050.py"
-      class_name: "DiamondD6050"
-      port: COM3
-      baud: 57600
-      az_axis: Y
-      el_axis: X
+      pos_1:
+        driver: "equipment/positioner/Diamond_D6050.py"
+        class_name: "DiamondD6050"
+        port: COM3
+        baud: 57600
+        az_axis: Y
+        el_axis: X
 
     spectrum_analyser:
       spec_an_1:
@@ -20,6 +21,13 @@ Rf_control_room_minipc:
 
     signal_generator:
       sig_gen_1:
+        driver: "equipment/signal_generator/rxcc.py"
+        class_name: "RXCC"
+        rpicontrol_ipaddress: "http://10.0.1.195:8000"
+        timeout: 5
+        max_retries: 2
+
+      sig_gen_2:
         driver: "equipment/signal_generator/Signal_Hound_VSG60A.py"
         class_name: "Vsg60A"
         manufacturer: "Signal Hound"
