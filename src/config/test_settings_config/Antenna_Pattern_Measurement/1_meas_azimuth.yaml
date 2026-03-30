@@ -8,20 +8,19 @@ max_hold_seconds: 2
 sweep_mode: boresight_return
 
 height_m: 1.5
-polarisation: H
+polarisation: [H,V]
 DUT: "RXCC EV4 pos4 raised Ch40 Rx Horn WR340 HPol 2.5deg Max hold 2sec"
 dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  #rode rxcc device
-#  source: rxcc   #already marked in 
-  channel: 0, 20, 40, 60, 80 
-  power_level: 10
-  antenna: "main", "secondary"
+  channels: [0, 20]   # [0, 20, 40, 60, 80] 
+  power_levels: [10]
+  antennas: ["main", "secondary"]
 
 
 spec_an_1:  #signal hound BBD60
-  #frequency_hz: 2400000000 #ch0  #2440000000 ch80
   span_hz: 100000         # analyser zoom span
-  RBW: 10000              # Resolution BW  span
-  VBW: 10000              # Video BW span
+  rbw_hz: 10000              # Resolution BW  span
+  vbw_hz: 10000              # Video BW span
+  #frequency_hz: 2400000000 #ch0  #2440000000 ch80

@@ -14,7 +14,7 @@ Antenna_Pattern_Measurement:
   required_equipment:
     - positioner
     - spectrum_analyser
-    #- signal_generator.sig_gen_1
+    - signal_generator.sig_gen_1
   tests:
     - 1_meas_azimuth
     # - 2_polar
