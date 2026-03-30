@@ -24,8 +24,6 @@ Use `/openapi.json` as the canonical machine-readable contract, and use this Mar
 |---|---|---|---|---|
 | GET | `/health` | None | `200` JSON: `{"status":"ok","service":"damspy-rpicontrol","hid_backend":"<backend-or-unavailable>","device":"RODE RXCC","vendor_id":"0x19F7","product_id":"0x008C"}` | `500` unexpected server error |
 | POST | `/api/rf/start` | JSON object: `{"antenna":"main"\|"secondary","channel":0..80,"power":0..10}` | `200` JSON: `{"operation":"start_rf","status":"ok","detail":"...","reports_sent":<int>}` | `422` validation error; `503` device unavailable; `502` communication failure |
-| POST | `/api/rf/start/ch0` | None | `200` JSON: `{"operation":"start_rf_ch0","status":"ok","detail":"...","reports_sent":<int>}` | `503` device unavailable; `502` communication failure |
-| POST | `/api/rf/start/ch80` | None | `200` JSON: `{"operation":"start_rf_ch80","status":"ok","detail":"...","reports_sent":<int>}` | `503` device unavailable; `502` communication failure |
 | POST | `/api/rf/stop` | None | `200` JSON: `{"operation":"stop_rf","status":"ok","detail":"Sent RF stop command.","reports_sent":<int>}` | `503` device unavailable; `502` communication failure |
 
 ### Important behavior notes
@@ -51,8 +49,6 @@ curl -sS -X POST "$PI/api/rf/start" \
   -H "Content-Type: application/json" \
   -d '{"antenna":"main","channel":0,"power":10}'
 
-curl -sS -X POST "$PI/api/rf/start/ch0"
-curl -sS -X POST "$PI/api/rf/start/ch80"
 curl -sS -X POST "$PI/api/rf/stop"
 ```
 
@@ -69,8 +65,6 @@ Invoke-RestMethod -Uri "$Base/api/rf/start" -Method POST -ContentType "applicati
   power   = 10
 } | ConvertTo-Json)
 
-Invoke-RestMethod -Uri "$Base/api/rf/start/ch0" -Method POST
-Invoke-RestMethod -Uri "$Base/api/rf/start/ch80" -Method POST
 Invoke-RestMethod -Uri "$Base/api/rf/stop" -Method POST
 ```
 
@@ -126,57 +120,4 @@ Recommended control flow for automation:
 ---
 
 
-## Editing Guidelines (Do Not Modify Below This Line)
 
-This document describes **how the system interacts with external systems**.
-
-Its purpose is to provide a clear overview of the **system boundary**.
-
-Document any **interfaces between this system and external systems**.
-
-Examples may include:
-
-• APIs exposed by the system
-• external APIs used by the system
-• webhooks
-• message queues
-• scheduled triggers
-• email integrations
-• file imports or exports
-
-For each interface, describe:
-
-• the external system
-• how communication occurs
-• what events or data are exchanged
-
-Example sections:
-
-### External API
-
-Describe any API endpoints exposed by the system.
-
-### Webhooks / Event Triggers
-
-Describe events that trigger processing in the system.
-
-### Third-Party Services
-
-Describe external services or platforms used by the system.
-
-Use this document to describe:
-
-• APIs
-• event sources
-• integrations
-• external data flows
-
-Avoid including:
-
-• internal component communication
-• implementation details
-• engineering tasks
-
-Internal system structure belongs in `architecture.md`.
-
-Only edit the **Content section above** unless the documentation system itself is being changed.

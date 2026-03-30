@@ -3,7 +3,8 @@
 
 ## Content
 
-(Add content here)
+You know what.  This folder could be called phase 1 instead of setup.  These docs arent used post phase 1
+
 
 ---
 

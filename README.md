@@ -29,8 +29,8 @@ The repo is intended to remain focused on measurement orchestration and executio
 
 A typical use of damspy-core is:
 
-1. select or prepare the required configuration
-2. run the measurement entrypoint
+1. select or prepare the required configuration using the yaml files.
+2. run the measurement entrypoint using run.py
 3. DAMspy loads the required equipment and test settings
 4. the selected workflow executes
 5. outputs are written to the run folder for later inspection and comparison

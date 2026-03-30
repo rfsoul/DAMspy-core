@@ -1,15 +1,12 @@
 # Project Definition
 
 ## Content
-# Project Definition
-
-## Content
 
 damspy-core is the core measurement execution and orchestration repository within the DAMspy system.
 
 It is responsible for running configured RF / EMC / chamber-style measurement workflows by coordinating lab equipment, motion systems, and test logic, and producing useful output data for analysis and comparison.
 
-This repository is already functional and in active use.  
+This repository is already functional and in active use.
 This document reflects the current role of the system and its intended boundaries as it continues to evolve.
 
 ---
@@ -66,7 +63,7 @@ damspy-core will integrate with damspy-rpicontrol as an external service.
 
 This integration should:
 
-- use the defined external interface (see reference/)
+- use the defined external interface (see `reference/`)
 - remain contained within a clear adapter or integration layer
 - avoid spreading service-specific logic throughout test methods
 
@@ -122,135 +119,5 @@ The following are not current goals for damspy-core:
 
 This document reflects the current understanding of damspy-core as an operational system.
 
-It is not a complete or final specification.  
+It is not a complete or final specification.
 It should be updated as the system evolves and as boundaries become clearer through use.
-
-
----
-
-## Editing Guidelines (Do Not Modify Below This Line)
-
-This document describes the problem the system solves.
-
-It intentionally avoids implementation details.
-
-Architecture and technology choices are described elsewhere.
-
----
-
-# Problem
-
-Describe the real-world problem the system solves.
-
-Focus on the user's perspective.
-
----
-
-# Target User
-
-Describe who the system is for.
-
-Examples:
-
-• contractors  
-• developers  
-• Etsy sellers  
-• RF engineers  
-
----
-
-# Core Capability
-
-Describe the primary capability of the system.
-
-The system should ideally do **one thing extremely well**.
-
----
-
-# System Scope
-
-Define the **boundary of responsibility** for the system.
-
-This section clarifies what the system **includes** and what it **intentionally excludes**.
-
-### Included
-
-Describe the responsibilities the system **does perform**.
-
-Examples:
-
-• generating invoices from user input  
-• storing collected data  
-• triggering notifications  
-
-### Excluded
-
-Describe capabilities that are **explicitly outside the scope** of the system.
-
-Examples:
-
-• enterprise billing systems  
-• full accounting software  
-• user account management  
-• large-scale analytics  
-
-Items listed here may appear in `futuredirections.md` but are not part of the current system.
-
----
-
-# Inputs
-
-What information enters the system?
-
-Examples:
-
-• emails  
-• API requests  
-• files  
-• sensor readings  
-
----
-
-# Outputs
-
-What does the system produce?
-
-Examples:
-
-• invoices  
-• reports  
-• alerts  
-• stored data  
-
----
-
-# Non-Goals
-
-What the system explicitly does **not** attempt to do.
-
-This prevents scope creep.
-
----
-
-# Success Criteria
-
-How we know the system is working.
-
-Examples:
-
-• an invoice is generated within 10 seconds  
-• data is stored reliably  
-• users receive expected output  
-
----
-
-# Constraints
-
-Known limitations.
-
-Examples:
-
-• must run on Vercel  
-• must use Gmail API  
-• must run on Raspberry Pi  
-• must operate without user accounts

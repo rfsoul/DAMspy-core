@@ -73,8 +73,6 @@ Test workflows must not become a dumping ground for:
 - raw HTTP integration logic
 - duplicated hardware-specific workarounds
 
-The older README material is particularly helpful here: no SCPI/serial in test methods; drivers only. :contentReference[oaicite:2]{index=2}
-
 ---
 
 ## 6. External Service Integrations Must Be Explicit
@@ -120,8 +118,6 @@ This includes preserving the practical value of:
 
 Output format and structure may evolve, but changes must not casually destroy comparison value or operator usefulness.
 
-The existing repo material points to this clearly through per-run folders, manifests, snapshots, and analysis/report outputs. :contentReference[oaicite:3]{index=3}
-
 ---
 
 ## 9. Data and Metadata Must Stay Aligned
@@ -147,7 +143,7 @@ Simulation must not become a fake side system that teaches the wrong execution m
 
 Live execution must not bypass the core structure in a way that makes simulation irrelevant.
 
-The old repo design material is useful here: simulation support was treated as mandatory and intended to preserve the same orchestration shape. 
+Where both paths exist, they should preserve the same broad orchestration model.
 
 ---
 
@@ -163,8 +159,6 @@ This includes things such as:
 - safe hardware initialization and shutdown behaviour
 
 No refactor or convenience abstraction may silently remove or bypass these protections.
-
-The existing configuration material explicitly includes motion constraints and timing concepts such as settle/dwell behaviour. 
 
 ---
 
@@ -188,7 +182,7 @@ If documentation and working code disagree:
 - update the documentation
 - do not force the code to match stale docs without understanding why the divergence exists
 
-This protects the repository from “documentation-driven breakage.”
+This protects the repository from documentation-driven breakage.
 
 ---
 
@@ -219,28 +213,3 @@ If an invariant needs to change, that change should be explicit and justified ra
 These invariants are intentionally practical rather than exhaustive.
 
 They should be expanded only where additional precision helps protect the real working system from confusion or unsafe change.
-
-## Editing Guidelines (Do Not Modify Below This Line)
-
-This document records the **core constraints that must remain true** as the project evolves.
-
-It defines the system’s non-negotiable rules.
-
-These invariants protect the project from drift during:
-
-• implementation  
-• refactoring  
-• feature addition  
-• AI-assisted changes
-
-Every invariant should be:
-
-• specific  
-• durable  
-• testable in principle
-
-Avoid including:
-
-• temporary implementation details  
-• speculative future ideas  
-• stylistic preferences
