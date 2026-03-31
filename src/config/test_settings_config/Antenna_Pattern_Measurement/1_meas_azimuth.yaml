@@ -1,26 +1,27 @@
-axis: azimuth
+DUT: "RXCC EV4 rare earth magnet taped to side"
+orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
 
+axis: azimuth
 boresight_deg: 0
 max_angle_deg: 160
 step_deg: 80
 max_hold_seconds: 2
-
 sweep_mode: boresight_return
 
 height_m: 1.5
-polarisation: [H,V]
-DUT: "RXCC EV4 pos4 raised Ch40 Rx Horn WR340 HPol 2.5deg Max hold 2sec"
+polarisation: [H, V]
 dwell_s: 0
 lowest_level: -80
 
-sig_gen_1:  #rode rxcc device
-  channels: [0, 20]   # [0, 20, 40, 60, 80] 
+sig_gen_1:  # rode rxcc device
+  channels: [0, 20]   # [0, 20, 40, 60, 80]
   power_levels: [10]
   antennas: ["main", "secondary"]
 
+rx_path:
+  antenna: "Horn WR340"   # receive antenna into spectrum analyser
 
-spec_an_1:  #signal hound BBD60
-  span_hz: 100000         # analyser zoom span
-  rbw_hz: 10000              # Resolution BW  span
-  vbw_hz: 10000              # Video BW span
-  #frequency_hz: 2400000000 #ch0  #2440000000 ch80
+spec_an_1:  # signal hound BBD60
+  span_hz: 100000
+  rbw_hz: 10000
+  vbw_hz: 10000

@@ -243,7 +243,7 @@ def run(params, equip):
                         token_pwr = sanitize_token(power_level)
                         token_ch = sanitize_token(channel)
 
-                        measurement_dir = os.path.join(outdir, "azimuth")
+                        measurement_dir = os.path.join(outdir, "1_meas_azimuth")
                         os.makedirs(measurement_dir, exist_ok=True)
 
                         combo_dir_name = (
