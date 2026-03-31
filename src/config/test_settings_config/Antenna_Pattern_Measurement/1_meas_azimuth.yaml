@@ -1,8 +1,8 @@
 axis: azimuth
 
 boresight_deg: 0
-max_angle_deg: 170
-step_deg: 2.5
+max_angle_deg: 160
+step_deg: 80
 max_hold_seconds: 2
 
 sweep_mode: boresight_return

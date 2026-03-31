@@ -75,6 +75,21 @@ A successful run produces operator-useful measurement outputs and supporting art
 
 The exact output structure depends on the workflow being run, but preserving useful run outputs and comparison value is more important than cosmetic refactoring.
 
+## DAMSpy ecosystem
+
+DAMspy-core is the measurement execution/orchestration repository within the wider DAMspy ecosystem.
+
+Related repositories are expected to include:
+
+- **damspy-core** — runs configured measurement workflows, coordinates equipment, and produces run outputs
+- **damspy-rpicontrol** — provides LAN-accessible HTTP/JSON control for RXCC-related hardware hosted outside the main NUC process
+- **damspy-vc** — consumes runtime state from damspy-core and presents operator-focused visualisation views such as an internal desk view and a phone-friendly view
+- **damspy.com** — may later provide a simple external-facing view of selected published DAMspy status artefacts
+
+Within this ecosystem, damspy-core remains focused on measurement execution and run truth.
+
+Where runtime monitoring or operator visualisation is needed, damspy-core is expected to expose its current state in a machine-readable form (for example WOYM-style JSON), while presentation concerns live in adjacent repositories rather than growing permanently inside damspy-core.
+
 ## Boundaries
 
 damspy-core is the core execution/orchestration repo.
@@ -84,6 +99,8 @@ It should not gradually become the long-term home for every UI or operator-contr
 Near-term development may integrate damspy-rpicontrol for external RXCC-related control.
 
 Longer-term richer operator GUI/control concerns are expected to live outside this repo, likely in damspy-vc, while damspy-core remains focused on measurement execution.
+
+
 
 ## Related material
 

@@ -73,4 +73,4 @@ if __name__ == "__main__":
 
     time.sleep(2)
     # move_azimuth_rel(+10.0, obey_limits=False)   # e.g. 10° one way
-    move_azimuth_rel(-161, obey_limits=False)      # e.g. 10° back  positive is CCW
+    move_azimuth_rel(-170, obey_limits=False)      # e.g. 10° back  positive is CCW
