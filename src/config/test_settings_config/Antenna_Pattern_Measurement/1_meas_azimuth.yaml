@@ -3,15 +3,12 @@ DUT_serial_number: "EV4"
 foldername_comment: "blah blah"
 yaml_comment: "etc"
 orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
-"""
-Orientation descriptions in filename of jpg.
-See DAMspy-core\src\DAMspy_logs\rxcc orientations
-Ori1 Vert usb up to right hinge at front screen at back.jpg
-Ori2 Flat pos2_usb to left hinge at front screen at back.jpg
-Ori3 Vert usb down hinge at front screen at back.jpg
-Ori4_Flat_usb to right hinge at front screen at back.jpg
+orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
+  ori1: "Vert usb up to right hinge at front screen at back"
+  ori2: "Flat pos2_usb to left hinge at front screen at back"
+  ori3: "Vert usb down hinge at front screen at back"
+  ori4: "Flat usb to right hinge at front screen at back"
 
-"""
 axis: azimuth
 boresight_deg: 0
 max_angle_deg: 160
