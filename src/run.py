@@ -1,19 +1,26 @@
 """
-DAMspy v17 – run.py (corrected FULL version)
-- DUT suffix applied to TOP-LEVEL output directory
-- NO per-test subfolder
-- AF/Loss files copied into root output directory
-- Compatible with DAMspy v17 architecture
+DAMspy – run.py
+
+Updates in this version:
+- Top-level output folder name is derived from the first test YAML using:
+  current_group, timestamp, DUT_product, DUT_serial_number,
+  foldername_comment, orientations, channels, power levels,
+  polarisations, step size, and RX antenna.
+- Copies the source YAML file(s) used for the run into the top-level run folder
+  using their original filenames.
+- Leaves per-test measurement logic unchanged.
 """
 
 import importlib.util
-import yaml
-import os
-import sys
-from pathlib import Path
-from datetime import datetime
-from equipment.utils.equipment_loader import EquipmentLoader
+import re
 import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+import yaml
+
+from equipment.utils.equipment_loader import EquipmentLoader
 
 
 # ----------------------------------------------------------
@@ -21,7 +28,7 @@ import shutil
 # ----------------------------------------------------------
 
 def load_yaml(path: Path):
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -37,25 +44,51 @@ def import_test_module(py_path: Path):
 
 
 def sanitize_windows_path(name: str) -> str:
-    """Remove invalid Windows filename characters."""
-    safe = "".join(c for c in name if c not in r'<>:"/\|?*')
-    return safe.replace(" ", "_").strip()
+    """
+    Remove invalid Windows filename characters and normalise whitespace.
+    """
+    safe = "".join(c for c in str(name) if c not in r'<>:"/\|?*')
+    safe = safe.replace(" ", "_")
+    safe = re.sub(r"_+", "_", safe)
+    safe = safe.strip("._- ")
+    return safe or "unknown"
 
 
-def safe_copy(src: str, outdir: Path):
-    """Copy AF and Loss CSVs into the output root directory."""
-    if not src:
+def ensure_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def list_token(prefix: str, values) -> str | None:
+    values = ensure_list(values)
+    if not values:
+        return None
+    joined = "_".join(sanitize_windows_path(v) for v in values)
+    return f"{prefix}_{joined}"
+
+
+def optional_token(value) -> str | None:
+    if value is None:
+        return None
+    text = sanitize_windows_path(value)
+    return text if text else None
+
+
+def copy_yaml_to_output(yaml_path: Path, outdir: Path):
+    if not yaml_path.exists():
+        print(f"[WARN] YAML not found for copy: {yaml_path}")
         return
-    src_path = Path(src)
-    if src_path.exists():
-        try:
-            dest = outdir / src_path.name
-            shutil.copy2(src_path, dest)
-            print(f"[INFO] Copied: {dest}")
-        except Exception as e:
-            print(f"[WARN] Failed to copy {src}: {e}")
-    else:
-        print(f"[WARN] File not found: {src}")
+
+    dest = outdir / yaml_path.name
+    try:
+        shutil.copy2(yaml_path, dest)
+        print(f"[INFO] Copied YAML to run root: {dest}")
+    except Exception as e:
+        print(f"[WARN] Failed to copy YAML {yaml_path} -> {dest}: {e}")
+
 
 def resolve_runtime_mode(repo_root: Path) -> str:
     localenv_path = repo_root / "operating_env" / ".localenv"
@@ -87,16 +120,51 @@ def resolve_runtime_mode(repo_root: Path) -> str:
 
     return "virtual"
 
+
+def build_output_folder_name(current_group: str, timestamp: str, first_params: dict) -> str:
+    """
+    Build the top-level run folder name from the current test group and first YAML.
+    """
+    dut_product = first_params.get("DUT_product", "UnknownDUT")
+    dut_serial_number = first_params.get("DUT_serial_number", "UnknownSerial")
+    foldername_comment = first_params.get("foldername_comment")
+
+    orientations = first_params.get("orientations", [])
+    polarisations = first_params.get("polarisation", [])
+    step_deg = first_params.get("step_deg", "unknown")
+
+    sg_cfg = first_params.get("sig_gen_1", {})
+    channels = sg_cfg.get("channels", [])
+    power_levels = sg_cfg.get("power_levels", [])
+
+    rx_cfg = first_params.get("rx_path", {})
+    rx_antenna = rx_cfg.get("antenna", "Unknown")
+
+    parts = [
+        sanitize_windows_path(current_group),
+        timestamp,
+        sanitize_windows_path(f"{dut_product}_{dut_serial_number}"),
+        optional_token(foldername_comment),
+        list_token("Ori", orientations),
+        list_token("Ch", channels),
+        list_token("Pwr", power_levels),
+        list_token("Pol", polarisations),
+        f"Step_{sanitize_windows_path(step_deg)}deg",
+        f"RxAnt_{sanitize_windows_path(rx_antenna)}",
+    ]
+
+    return "-".join(part for part in parts if part)
+
+
 # ----------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------
 
 def main():
-    print("\n=== DAMspy v17 Test Runner ===")
+    print("\n=== DAMspy Test Runner ===")
 
     root = Path(__file__).resolve().parent
     repo_root = root.parent
-
 
     runtime_mode = resolve_runtime_mode(repo_root)
     print(f"[INFO] Runtime mode resolved: {runtime_mode}")
@@ -105,8 +173,6 @@ def main():
         print("[INFO] Virtual runtime is not implemented yet.")
         print("[INFO] Exiting before equipment initialization.")
         sys.exit(0)
-
-
 
     # ---------------- Load Group Config ----------------
     group_cfg = load_yaml(root / "config" / "test_group_run_config.yaml")
@@ -122,7 +188,10 @@ def main():
 
     print(f"Current Test Group: {current_group}")
     print(f"Tests to run: {test_list}")
-    print(f' postprocessing script: {postprocs}')
+    print(f"Post-processing scripts: {postprocs}")
+
+    if not test_list:
+        raise RuntimeError(f"No tests configured for group '{current_group}'")
 
     # ---------------- Load Equipment ----------------
     equip_cfg_path = root / "config" / "location_config.yaml"
@@ -130,27 +199,22 @@ def main():
     print("Equipment loaded.")
 
     # ----------------------------------------------------------
-    # Determine DUT BEFORE creating output folder (use first test's YAML)
+    # Determine top-level output folder from the first test YAML
     # ----------------------------------------------------------
     first_test_name = test_list[0]
     first_yaml_path = root / "config" / "test_settings_config" / current_group / f"{first_test_name}.yaml"
     first_params = load_yaml(first_yaml_path)
 
-    dut_raw = first_params.get("DUT", "Unknown")
-    dut_clean = sanitize_windows_path(dut_raw)
-
-    # ----------------------------------------------------------
-    # Create TOP-LEVEL output directory with DUT suffix
-    # ----------------------------------------------------------
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_root = root / "DAMspy_logs" / f"{current_group}_{timestamp}_{dut_clean}"
+    folder_name = build_output_folder_name(current_group, timestamp, first_params)
+
+    output_root = root / "DAMspy_logs" / folder_name
     output_root.mkdir(parents=True, exist_ok=True)
 
     print(f"[LOG] Output directory: {output_root}")
 
-    # Copy AF + Loss files ONCE per test run
-    safe_copy(first_params.get("antenna_factor_file"), output_root)
-    safe_copy(first_params.get("path_loss_file"), output_root)
+    # Copy the first YAML immediately so the run root is self-describing
+    copy_yaml_to_output(first_yaml_path, output_root)
 
     # ----------------------------------------------------------
     # Begin running each test
@@ -171,7 +235,11 @@ def main():
             print(f"[ERROR] YAML unreadable: {yaml_path}")
             continue
 
-        # Pass the SAME output directory to every test
+        # Copy each test YAML to the run root using its original filename.
+        # This future-proofs multi-test groups.
+        copy_yaml_to_output(yaml_path, output_root)
+
+        # Pass the SAME top-level output directory to every test
         params["output_dir"] = str(output_root)
 
         # ----------------------------------------------------------
@@ -199,6 +267,7 @@ def main():
             test_module.run(params, equip_mgr)
         except Exception as e:
             print(f"[ERROR] Test {test_name} failed: {e}")
+
     # ----------------------------------------------------------
     # Run post-processing (group-level)
     # ----------------------------------------------------------
@@ -207,10 +276,10 @@ def main():
 
     for pp_name in postprocs:
         pp_path = (
-                root
-                / "test_postprocessing"
-                / current_group
-                / f"{pp_name}.py"
+            root
+            / "test_postprocessing"
+            / current_group
+            / f"{pp_name}.py"
         )
 
         if not pp_path.exists():
