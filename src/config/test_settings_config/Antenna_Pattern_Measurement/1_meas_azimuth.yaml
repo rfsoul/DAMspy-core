@@ -1,6 +1,17 @@
-DUT: "RXCC EV4 rare earth magnet taped to side"
+DUT_product: "RXCC"
+DUT_serial_number: "EV4"
+foldername_comment: "blah blah"
+yaml_comment: "etc"
 orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
+"""
+Orientation descriptions in filename of jpg.
+See DAMspy-core\src\DAMspy_logs\rxcc orientations
+Ori1 Vert usb up to right hinge at front screen at back.jpg
+Ori2 Flat pos2_usb to left hinge at front screen at back.jpg
+Ori3 Vert usb down hinge at front screen at back.jpg
+Ori4_Flat_usb to right hinge at front screen at back.jpg
 
+"""
 axis: azimuth
 boresight_deg: 0
 max_angle_deg: 160
@@ -20,6 +31,9 @@ sig_gen_1:  # rode rxcc device
 
 rx_path:
   antenna: "Horn WR340"   # receive antenna into spectrum analyser
+  antenna_comment: "www.ainfoinc.com  2.2-3.3 GHz WR340 11dB  P/N NB-340-10-C-NF"
+  rx_cable_loss_2.45Ghz: 4.6 #dB at 2.45GHz
+  rx_dist_m: 3.02 # Distance in metres from centre of DAMS to Rx antenna
 
 spec_an_1:  # signal hound BBD60
   span_hz: 100000
