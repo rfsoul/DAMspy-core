@@ -18,6 +18,7 @@ max_angle_deg: 160
 step_deg: 80
 max_hold_seconds: 2
 sweep_mode: boresight_return
+live_plot_every_deg: 20
 
 height_m: 1.5
 polarisation: [H, V]
