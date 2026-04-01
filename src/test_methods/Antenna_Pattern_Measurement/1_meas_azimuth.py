@@ -3,7 +3,8 @@
 #
 # Antenna Pattern Measurement – Azimuth Sweep
 # Multi-condition version:
-# - manual outer loop for polarisation
+# - manual outer loop for DUT orientation
+# - manual next loop for polarisation
 # - automated inner loops for RXCC antenna / power / channel
 # - one folder per condition combination
 # ------------------------------------------------------------
@@ -15,7 +16,7 @@ from time import sleep, time
 
 
 def meta_write(path, meta: dict):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
@@ -155,20 +156,29 @@ def run(params, equip):
     os.makedirs(outdir, exist_ok=True)
 
     # ---------------- YAML parameters ----------------
-    bore = params.get("boresight_deg", 0)
+    dut_product = params.get("DUT_product", "Unknown")
+    dut_serial_number = params.get("DUT_serial_number", "Unknown")
+    foldername_comment = params.get("foldername_comment", "")
+    yaml_comment = params.get("yaml_comment", "")
+
+    axis = params.get("axis", "azimuth")
+    sweep_mode = params.get("sweep_mode", "unknown")
+
+    bore = float(params.get("boresight_deg", 0))
     maxa = float(params["max_angle_deg"])
     step = float(params["step_deg"])
 
     dwell_s = float(params.get("dwell_s", 0.5))
     hold_s = float(params.get("max_hold_seconds", 1.0))
-
-    dut = params.get("DUT", "Unknown")
+    height_m = params.get("height_m", None)
     lowest_level_dbm = params.get("lowest_level", None)
 
+    orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
 
     sg_cfg = params["sig_gen_1"]
     sa_cfg = params["spec_an_1"]
+    rx_cfg = params.get("rx_path", {})
 
     channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
     power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
@@ -182,16 +192,24 @@ def run(params, equip):
     vbw_hz = int(sa_cfg.get("vbw_hz", sa_cfg.get("VBW", 10_000)))
 
     print("[CFG] Parsed YAML parameters:")
-    print(f"      DUT                : {dut}")
+    print(f"      DUT product        : {dut_product}")
+    print(f"      DUT serial         : {dut_serial_number}")
+    print(f"      Folder comment     : {foldername_comment}")
+    print(f"      YAML comment       : {yaml_comment}")
+    print(f"      Axis               : {axis}")
+    print(f"      Sweep mode         : {sweep_mode}")
+    print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
     print(f"      Boresight (logical): {bore:.1f}°")
     print(f"      Max angle          : ±{maxa:.1f}°")
     print(f"      Step size          : {step:.1f}°")
+    print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
     print(f"      Channels           : {channels}")
     print(f"      Power levels       : {power_levels}")
     print(f"      Antennas           : {antennas}")
+    print(f"      RX path            : {rx_cfg}")
     print(f"      SA span            : {span_hz/1e3:.1f} kHz")
     print(f"      SA RBW             : {rbw_hz/1e3:.1f} kHz")
     print(f"      SA VBW             : {vbw_hz/1e3:.1f} kHz")
@@ -200,117 +218,127 @@ def run(params, equip):
     try:
         combo_index = 0
 
+        measurement_dir = os.path.join(outdir, "1_meas_azimuth")
+        os.makedirs(measurement_dir, exist_ok=True)
+
         # Manual-change dimensions outermost
-        for pol in polarisations:
+        for orientation in orientations:
             prompt_manual_change(
-                f"Set the manual test setup to polarisation '{pol}'."
+                f"Set the DUT orientation to '{orientation}'."
             )
 
-            # Automated dimensions innermost
-            for antenna in antennas:
-                for power_level in power_levels:
-                    for channel in channels:
-                        combo_index += 1
-                        tx_freq = rxcc_channel_to_frequency_hz(channel)
+            for pol in polarisations:
+                prompt_manual_change(
+                    f"Set the manual test setup to polarisation '{pol}'."
+                )
 
-                        print("\n" + "#" * 90)
-                        print(
-                            f"[COMBO {combo_index}] "
-                            f"POL={pol} | ANT={antenna} | PWR={power_level} | CH={channel} "
-                            f"({tx_freq/1e6:.3f} MHz)"
-                        )
-                        print("#" * 90)
+                # Automated dimensions innermost
+                for antenna in antennas:
+                    for power_level in power_levels:
+                        for channel in channels:
+                            combo_index += 1
+                            tx_freq = rxcc_channel_to_frequency_hz(channel)
 
-                        # Configure source
-                        sg.set_antenna(antenna)
-                        sg.set_power_level(power_level)
-                        sg.set_channel(channel)
-
-                        # Configure analyser
-                        print("\n[SA] Configuring spectrum analyser (narrowband mode)")
-                        print(
-                            f"[SA]   Center = {tx_freq/1e6:.6f} MHz | "
-                            f"Span = {span_hz/1e3:.1f} kHz"
-                        )
-                        sa.configure_narrowband(center_hz=tx_freq, span_hz=span_hz)
-
-                        # Output structure:
-                        # run root (from run.py)
-                        #   -> azimuth/
-                        #       -> one folder per combination
-                        token_pol = sanitize_token(pol)
-                        token_ant = sanitize_token(antenna)
-                        token_pwr = sanitize_token(power_level)
-                        token_ch = sanitize_token(channel)
-
-                        measurement_dir = os.path.join(outdir, "1_meas_azimuth")
-                        os.makedirs(measurement_dir, exist_ok=True)
-
-                        combo_dir_name = (
-                            f"pol-{token_pol}_"
-                            f"ant-{token_ant}_"
-                            f"pwr-{token_pwr}_"
-                            f"ch-{token_ch}"
-                        )
-                        combo_dir = os.path.join(measurement_dir, combo_dir_name)
-                        os.makedirs(combo_dir, exist_ok=True)
-
-                        csv_path = os.path.join(combo_dir, "pattern_azimuth.csv")
-                        meta_path = os.path.join(combo_dir, "metadata.json")
-
-                        combo_meta = {
-                            "DUT": dut,
-                            "measurement": "Azimuth Pattern Measurement",
-                            "sweep_axis": "azimuth",
-                            "coordinate_frame": "DUT_PCB_XYZ (Altium)",
-                            "polarisation": pol,
-                            "boresight_deg": bore,
-                            "max_angle_deg": maxa,
-                            "step_deg": step,
-                            "sweep_mode": "single_pass_relative",
-                            "sig_gen_1": {
-                                "channel": channel,
-                                "power_level": power_level,
-                                "antenna": antenna,
-                                "frequency_hz": tx_freq,
-                            },
-                            "spec_an_1": {
-                                "center_frequency_hz": tx_freq,
-                                "span_hz": span_hz,
-                                "rbw_hz": rbw_hz,
-                                "vbw_hz": vbw_hz,
-                            },
-                            "capture_method": {
-                                "type": "per_point_max_hold",
-                                "max_hold_seconds": hold_s,
-                                "dwell_seconds": dwell_s,
-                            },
-                            "limits": {
-                                "lowest_level_dbm": lowest_level_dbm
-                            },
-                        }
-
-                        meta_write(meta_path, combo_meta)
-                        print(f"[META] Written → {meta_path}")
-                        print(f"[OUT]  CSV output → {csv_path}")
-
-                        # Start RF
-                        print("[TX] Starting RXCC RF")
-                        sg.rf_on()
-                        try:
-                            run_single_azimuth_sweep(
-                                pos=pos,
-                                sa=sa,
-                                csv_path=csv_path,
-                                maxa=maxa,
-                                step=step,
-                                dwell_s=dwell_s,
-                                hold_s=hold_s,
-                                lowest_level_dbm=lowest_level_dbm,
+                            print("\n" + "#" * 90)
+                            print(
+                                f"[COMBO {combo_index}] "
+                                f"ORI={orientation} | POL={pol} | ANT={antenna} | "
+                                f"PWR={power_level} | CH={channel} "
+                                f"({tx_freq/1e6:.3f} MHz)"
                             )
-                        finally:
-                            print("[TX] Stopping RXCC RF")
-                            sg.rf_off()
+                            print("#" * 90)
+
+                            # Configure source
+                            sg.set_antenna(antenna)
+                            sg.set_power_level(power_level)
+                            sg.set_channel(channel)
+
+                            # Configure analyser
+                            print("\n[SA] Configuring spectrum analyser (narrowband mode)")
+                            print(
+                                f"[SA]   Center = {tx_freq/1e6:.6f} MHz | "
+                                f"Span = {span_hz/1e3:.1f} kHz"
+                            )
+                            sa.configure_narrowband(center_hz=tx_freq, span_hz=span_hz)
+
+                            token_ori = sanitize_token(orientation)
+                            token_pol = sanitize_token(pol)
+                            token_ant = sanitize_token(antenna)
+                            token_pwr = sanitize_token(power_level)
+                            token_ch = sanitize_token(channel)
+
+                            combo_dir_name = (
+                                f"ori-{token_ori}_"
+                                f"pol-{token_pol}_"
+                                f"ant-{token_ant}_"
+                                f"pwr-{token_pwr}_"
+                                f"ch-{token_ch}"
+                            )
+                            combo_dir = os.path.join(measurement_dir, combo_dir_name)
+                            os.makedirs(combo_dir, exist_ok=True)
+
+                            csv_path = os.path.join(combo_dir, "pattern_azimuth.csv")
+                            meta_path = os.path.join(combo_dir, "metadata.json")
+
+                            combo_meta = {
+                                "test_method": "1_meas_azimuth",
+                                "measurement": "Azimuth Pattern Measurement",
+                                "axis": axis,
+                                "sweep_mode": sweep_mode,
+                                "DUT_product": dut_product,
+                                "DUT_serial_number": dut_serial_number,
+                                "foldername_comment": foldername_comment,
+                                "yaml_comment": yaml_comment,
+                                "orientation": orientation,
+                                "polarisation": pol,
+                                "boresight_deg": bore,
+                                "max_angle_deg": maxa,
+                                "step_deg": step,
+                                "height_m": height_m,
+                                "sig_gen_1": {
+                                    "channel": channel,
+                                    "power_level": power_level,
+                                    "antenna": antenna,
+                                    "frequency_hz": tx_freq,
+                                },
+                                "rx_path": rx_cfg,
+                                "spec_an_1": {
+                                    "center_frequency_hz": tx_freq,
+                                    "span_hz": span_hz,
+                                    "rbw_hz": rbw_hz,
+                                    "vbw_hz": vbw_hz,
+                                },
+                                "capture_method": {
+                                    "type": "per_point_max_hold",
+                                    "max_hold_seconds": hold_s,
+                                    "dwell_seconds": dwell_s,
+                                },
+                                "limits": {
+                                    "lowest_level_dbm": lowest_level_dbm
+                                },
+                            }
+
+                            meta_write(meta_path, combo_meta)
+                            print(f"[META] Written → {meta_path}")
+                            print(f"[OUT]  CSV output → {csv_path}")
+
+                            # Start RF
+                            print("[TX] Starting RXCC RF")
+                            sg.rf_on()
+                            try:
+                                run_single_azimuth_sweep(
+                                    pos=pos,
+                                    sa=sa,
+                                    csv_path=csv_path,
+                                    maxa=maxa,
+                                    step=step,
+                                    dwell_s=dwell_s,
+                                    hold_s=hold_s,
+                                    lowest_level_dbm=lowest_level_dbm,
+                                )
+                            finally:
+                                print("[TX] Stopping RXCC RF")
+                                sg.rf_off()
 
     finally:
         sg.close()
