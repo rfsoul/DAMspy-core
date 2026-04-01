@@ -18,8 +18,8 @@ Antenna_Pattern_Measurement:
   tests:
     - 1_meas_azimuth
     # - 2_polar
-  test_postprocessing:
-    - 1_azimuth_polar_plot
+  #test_postprocessing:
+  #  - 1_azimuth_polar_plot
 
 Emissions_Measurement:
   required_equipment:

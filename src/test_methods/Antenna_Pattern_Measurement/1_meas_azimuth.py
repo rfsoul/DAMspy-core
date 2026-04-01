@@ -7,12 +7,16 @@
 # - manual next loop for polarisation
 # - automated inner loops for RXCC antenna / power / channel
 # - one folder per condition combination
+# - live partial polar plot generation during sweep
 # ------------------------------------------------------------
 
-import os
-import json
 import csv
+import json
+import math
+import os
 from time import sleep, time
+
+import matplotlib.pyplot as plt
 
 
 def meta_write(path, meta: dict):
@@ -48,18 +52,109 @@ def prompt_manual_change(message: str) -> None:
     input()
 
 
+def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
+    """
+    Regenerate the azimuth polar plot from the current CSV contents.
+    Safe to call repeatedly as the sweep progresses.
+    """
+    if not os.path.exists(csv_path):
+        print(f"[PLOT][WARN] Missing CSV: {csv_path}")
+        return
+
+    az_deg = []
+    levels_dbm = []
+
+    with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        required = {"azimuth_deg", "rx_peak_dbm"}
+        if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+            print(f"[PLOT][WARN] CSV missing required columns: {reader.fieldnames}")
+            return
+
+        for row in reader:
+            try:
+                az_deg.append(float(row["azimuth_deg"]))
+                levels_dbm.append(float(row["rx_peak_dbm"]))
+            except (ValueError, TypeError):
+                continue
+
+    if not az_deg:
+        print("[PLOT][WARN] No valid data points found yet")
+        return
+
+    max_dbm = max(levels_dbm)
+    e_over_emax = [10 ** ((v - max_dbm) / 20.0) for v in levels_dbm]
+    az_rad = [math.radians(a) for a in az_deg]
+
+    plt.figure(figsize=(8, 8))
+    ax = plt.subplot(111, projection="polar")
+
+    ax.plot(az_rad, e_over_emax, linewidth=2)
+
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_rlim(0, 1.05)
+
+    db_rings = [-3, -6, -10, -20]
+    ring_theta = [math.radians(a) for a in range(0, 361)]
+
+    for db in db_rings:
+        r = 10 ** (db / 20.0)
+        ax.plot(
+            ring_theta,
+            [r] * len(ring_theta),
+            linestyle="--",
+            linewidth=0.8,
+            color="gray",
+        )
+        ax.text(
+            math.radians(45),
+            r,
+            f"{db} dB",
+            fontsize=9,
+            color="gray",
+        )
+
+    ax.text(
+        math.radians(90),
+        1.02,
+        f"Emax = {max_dbm:.2f} dBm",
+        ha="center",
+        va="bottom",
+        fontsize=11,
+        fontweight="bold",
+    )
+
+    point_count = len(az_deg)
+    ax.set_title(
+        "Antenna Pattern – Azimuth Cut\n"
+        f"Linear E / Emax (points so far: {point_count})",
+        pad=20,
+    )
+
+    ax.grid(True)
+    plt.tight_layout()
+    plt.savefig(out_png)
+    plt.close()
+
+    print(f"[PLOT] Updated partial polar plot → {out_png}")
+
+
 def run_single_azimuth_sweep(
     *,
     pos,
     sa,
     csv_path: str,
+    plot_png_path: str,
     maxa: float,
     step: float,
     dwell_s: float,
     hold_s: float,
     lowest_level_dbm,
+    plot_every_deg: float,
 ):
     current_az = 0.0
+    last_plot_az = None
 
     def move_rel(delta_deg):
         nonlocal current_az
@@ -78,7 +173,7 @@ def run_single_azimuth_sweep(
         print(f"[POS] Move complete, settling for {dwell_s:.2f} s")
         sleep(dwell_s)
 
-    with open(csv_path, "w", newline="") as f:
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["azimuth_deg", "rx_peak_dbm", "peak_freq_hz"])
 
@@ -96,6 +191,7 @@ def run_single_azimuth_sweep(
 
         steps = int((2 * maxa) / step)
         print(f"[SWEEP] Total points: {steps + 1}")
+        print(f"[PLOT] Live plot update threshold: {plot_every_deg:.1f}°")
 
         for idx in range(steps + 1):
             az = current_az
@@ -123,12 +219,24 @@ def run_single_azimuth_sweep(
                 )
 
             writer.writerow([f"{az:.1f}", f"{rx_dbm:.6f}", f"{pk_f_hz:.0f}"])
+            f.flush()
 
             print(
                 f"[DATA] az {az:+6.1f}° | "
                 f"RX = {rx_dbm:7.2f} dBm | "
                 f"Fpk = {pk_f_hz/1e6:.6f} MHz"
             )
+
+            is_first_point = last_plot_az is None
+            moved_enough = (
+                last_plot_az is not None
+                and abs(az - last_plot_az) >= plot_every_deg
+            )
+            is_final_point = idx == steps
+
+            if is_first_point or moved_enough or is_final_point:
+                write_partial_polar_plot(csv_path, plot_png_path)
+                last_plot_az = az
 
             if az > -maxa:
                 print(f"[POS] Advancing to next azimuth step (-{step:.1f}°)")
@@ -172,6 +280,7 @@ def run(params, equip):
     hold_s = float(params.get("max_hold_seconds", 1.0))
     height_m = params.get("height_m", None)
     lowest_level_dbm = params.get("lowest_level", None)
+    plot_every_deg = float(params.get("live_plot_every_deg", 20.0))
 
     orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
@@ -206,6 +315,7 @@ def run(params, equip):
     print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
+    print(f"      Live plot every    : {plot_every_deg:.1f}°")
     print(f"      Channels           : {channels}")
     print(f"      Power levels       : {power_levels}")
     print(f"      Antennas           : {antennas}")
@@ -279,6 +389,7 @@ def run(params, equip):
 
                             csv_path = os.path.join(combo_dir, "pattern_azimuth.csv")
                             meta_path = os.path.join(combo_dir, "metadata.json")
+                            plot_png_path = os.path.join(combo_dir, "pattern_azimuth_EEmax.png")
 
                             combo_meta = {
                                 "test_method": "1_meas_azimuth",
@@ -312,6 +423,7 @@ def run(params, equip):
                                     "type": "per_point_max_hold",
                                     "max_hold_seconds": hold_s,
                                     "dwell_seconds": dwell_s,
+                                    "live_plot_every_deg": plot_every_deg,
                                 },
                                 "limits": {
                                     "lowest_level_dbm": lowest_level_dbm
@@ -320,7 +432,8 @@ def run(params, equip):
 
                             meta_write(meta_path, combo_meta)
                             print(f"[META] Written → {meta_path}")
-                            print(f"[OUT]  CSV output → {csv_path}")
+                            print(f"[OUT]  CSV output  → {csv_path}")
+                            print(f"[OUT]  Plot output → {plot_png_path}")
 
                             # Start RF
                             print("[TX] Starting RXCC RF")
@@ -330,11 +443,13 @@ def run(params, equip):
                                     pos=pos,
                                     sa=sa,
                                     csv_path=csv_path,
+                                    plot_png_path=plot_png_path,
                                     maxa=maxa,
                                     step=step,
                                     dwell_s=dwell_s,
                                     hold_s=hold_s,
                                     lowest_level_dbm=lowest_level_dbm,
+                                    plot_every_deg=plot_every_deg,
                                 )
                             finally:
                                 print("[TX] Stopping RXCC RF")
