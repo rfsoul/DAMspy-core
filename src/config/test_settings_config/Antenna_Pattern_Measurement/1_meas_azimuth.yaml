@@ -16,6 +16,8 @@ step_deg: 1
 max_hold_seconds: 2
 sweep_mode: boresight_return
 live_plot_every_deg: 20
+use_woym: true
+
 
 height_m: 1.5
 polarisation: [H, V]
