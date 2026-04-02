@@ -1,6 +1,6 @@
 DUT_product: "RXCC"
 DUT_serial_number: "EV4"
-foldername_comment: "blah blah"
+foldername_comment: "first"
 yaml_comment: "etc"
 orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
 orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
@@ -11,8 +11,8 @@ orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
 
 axis: azimuth
 boresight_deg: 0
-max_angle_deg: 160
-step_deg: 80
+max_angle_deg: 170
+step_deg: 1
 max_hold_seconds: 2
 sweep_mode: boresight_return
 live_plot_every_deg: 20
