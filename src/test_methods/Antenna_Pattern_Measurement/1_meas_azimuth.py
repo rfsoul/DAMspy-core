@@ -8,12 +8,14 @@
 # - automated inner loops for RXCC antenna / power / channel
 # - one folder per condition combination
 # - live partial polar plot generation during sweep
+# - WOYM updates during config, movement, measurement, plotting
 # ------------------------------------------------------------
 
 import csv
 import json
 import math
 import os
+from datetime import datetime
 from time import sleep, time
 
 import matplotlib.pyplot as plt
@@ -50,6 +52,111 @@ def prompt_manual_change(message: str) -> None:
     print("Press Enter when complete...")
     print("=" * 90)
     input()
+
+
+def iso_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def write_json_atomic(path: str, payload: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp_path, path)
+
+
+def load_woym(path: str) -> dict:
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def append_recent_event(woym: dict, event: str, limit: int = 20):
+    events = woym.setdefault("recent_events", [])
+    events.append({
+        "timestamp": iso_now(),
+        "event": event,
+    })
+    if len(events) > limit:
+        del events[:-limit]
+
+
+def write_woym_snapshot(woym: dict, run_woym_path: str, latest_woym_path: str):
+    woym["updated_at"] = iso_now()
+    if run_woym_path:
+        write_json_atomic(run_woym_path, woym)
+    if latest_woym_path:
+        write_json_atomic(latest_woym_path, woym)
+
+
+def update_woym(
+    *,
+    run_woym_path: str,
+    latest_woym_path: str,
+    event: str = "",
+    status: str = None,
+    current_test_group: str = None,
+    current_test_method: str = None,
+    current_state: dict = None,
+    current_sweep: dict = None,
+    last_measurement: dict = None,
+    artifacts: dict = None,
+    error: dict = None,
+):
+    if not run_woym_path:
+        return
+
+    woym = load_woym(run_woym_path)
+
+    if current_test_group is not None:
+        woym["current_test_group"] = current_test_group
+    if current_test_method is not None:
+        woym["current_test_method"] = current_test_method
+    if status is not None:
+        woym["status"] = status
+    if current_state is not None:
+        woym["current_state"] = current_state
+    if current_sweep is not None:
+        woym["current_sweep"] = current_sweep
+    if last_measurement is not None:
+        woym["last_measurement"] = last_measurement
+
+    if artifacts is not None:
+        current_artifacts = woym.setdefault("artifacts", {})
+        current_artifacts.update(artifacts)
+
+    if error is not None:
+        woym["error"] = error
+
+    if event:
+        append_recent_event(woym, event)
+
+    write_woym_snapshot(woym, run_woym_path, latest_woym_path)
+
+
+def set_woym_error(run_woym_path: str, latest_woym_path: str, message: str, where: str):
+    update_woym(
+        run_woym_path=run_woym_path,
+        latest_woym_path=latest_woym_path,
+        status="error",
+        current_state={
+            "state": "error",
+            "message": message,
+            "target": {},
+        },
+        error={
+            "status": "active",
+            "message": message,
+            "where": where,
+            "timestamp": iso_now(),
+        },
+        event=message,
+    )
 
 
 def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
@@ -140,21 +247,67 @@ def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
     print(f"[PLOT] Updated partial polar plot → {out_png}")
 
 
+def build_current_sweep_dict(
+    *,
+    sweep_index: int,
+    total_sweeps: int,
+    point_index: int,
+    total_points: int,
+    axis: str,
+    orientation,
+    polarisation,
+    antenna,
+    power_level,
+    channel,
+    frequency_hz,
+):
+    return {
+        "sweep_index": sweep_index,
+        "total_sweeps": total_sweeps,
+        "point_index": point_index,
+        "total_points": total_points,
+        "axis": axis,
+        "orientation": orientation,
+        "polarisation": polarisation,
+        "antenna": antenna,
+        "power_level": power_level,
+        "channel": channel,
+        "frequency_hz": frequency_hz,
+    }
+
+
 def run_single_azimuth_sweep(
     *,
     pos,
     sa,
     csv_path: str,
     plot_png_path: str,
+    run_woym_path: str,
+    latest_woym_path: str,
+    current_group: str,
+    current_test_method: str,
+    orientation,
+    polarisation,
+    antenna,
+    power_level,
+    channel,
+    tx_freq,
+    sweep_index: int,
+    total_sweeps: int,
     maxa: float,
     step: float,
     dwell_s: float,
     hold_s: float,
     lowest_level_dbm,
     plot_every_deg: float,
+    combo_dir: str,
+    meta_path: str,
 ):
     current_az = 0.0
     last_plot_az = None
+
+    steps = int((2 * maxa) / step)
+    total_points = steps + 1
 
     def move_rel(delta_deg):
         nonlocal current_az
@@ -163,6 +316,41 @@ def run_single_azimuth_sweep(
             return
 
         target = current_az + delta_deg
+        update_woym(
+            run_woym_path=run_woym_path,
+            latest_woym_path=latest_woym_path,
+            current_test_group=current_group,
+            current_test_method=current_test_method,
+            status="running",
+            current_state={
+                "state": "moving",
+                "message": f"Moving azimuth from {current_az:+.1f}° to {target:+.1f}°",
+                "target": {
+                    "azimuth_deg": target,
+                },
+            },
+            current_sweep=build_current_sweep_dict(
+                sweep_index=sweep_index,
+                total_sweeps=total_sweeps,
+                point_index=0,
+                total_points=total_points,
+                axis="azimuth",
+                orientation=orientation,
+                polarisation=polarisation,
+                antenna=antenna,
+                power_level=power_level,
+                channel=channel,
+                frequency_hz=tx_freq,
+            ),
+            artifacts={
+                "latest_csv_path": csv_path,
+                "latest_plot_path": plot_png_path,
+                "latest_metadata_path": meta_path,
+                "combo_dir": combo_dir,
+            },
+            event=f"Moving azimuth to {target:+.1f}°",
+        )
+
         print(
             f"[POS] Commanding AZ move: "
             f"{current_az:+.1f}° → {target:+.1f}° "
@@ -184,21 +372,94 @@ def run_single_azimuth_sweep(
         print("[POS] Software azimuth reference set to 0°")
         current_az = 0.0
 
+        update_woym(
+            run_woym_path=run_woym_path,
+            latest_woym_path=latest_woym_path,
+            current_test_group=current_group,
+            current_test_method=current_test_method,
+            status="running",
+            current_state={
+                "state": "configuring",
+                "message": "Starting azimuth sweep",
+                "target": {},
+            },
+            current_sweep=build_current_sweep_dict(
+                sweep_index=sweep_index,
+                total_sweeps=total_sweeps,
+                point_index=0,
+                total_points=total_points,
+                axis="azimuth",
+                orientation=orientation,
+                polarisation=polarisation,
+                antenna=antenna,
+                power_level=power_level,
+                channel=channel,
+                frequency_hz=tx_freq,
+            ),
+            artifacts={
+                "latest_csv_path": csv_path,
+                "latest_plot_path": plot_png_path,
+                "latest_metadata_path": meta_path,
+                "combo_dir": combo_dir,
+            },
+            error={
+                "status": "none",
+                "message": "",
+                "where": "",
+                "timestamp": "",
+            },
+            event=(
+                f"Started sweep {sweep_index}/{total_sweeps}: "
+                f"ORI={orientation} POL={polarisation} ANT={antenna} "
+                f"PWR={power_level} CH={channel}"
+            ),
+        )
+
         print(f"\n[POS] Pre-positioning to +{maxa:.1f}° (no RF capture)")
         move_rel(+maxa)
 
         print("\n[SWEEP] Measurement phase: +max → 0 → -max\n")
-
-        steps = int((2 * maxa) / step)
-        print(f"[SWEEP] Total points: {steps + 1}")
+        print(f"[SWEEP] Total points: {total_points}")
         print(f"[PLOT] Live plot update threshold: {plot_every_deg:.1f}°")
 
-        for idx in range(steps + 1):
+        for idx in range(total_points):
             az = current_az
 
             print("\n----------------------------------------------------")
             print(f"[POINT {idx+1:03d}] AZIMUTH = {az:+.1f}°")
             print("----------------------------------------------------")
+
+            update_woym(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                current_state={
+                    "state": "measuring",
+                    "message": f"Measuring azimuth point at {az:+.1f}°",
+                    "target": {
+                        "azimuth_deg": az,
+                    },
+                },
+                current_sweep=build_current_sweep_dict(
+                    sweep_index=sweep_index,
+                    total_sweeps=total_sweeps,
+                    point_index=idx + 1,
+                    total_points=total_points,
+                    axis="azimuth",
+                    orientation=orientation,
+                    polarisation=polarisation,
+                    antenna=antenna,
+                    power_level=power_level,
+                    channel=channel,
+                    frequency_hz=tx_freq,
+                ),
+                artifacts={
+                    "latest_csv_path": csv_path,
+                    "latest_plot_path": plot_png_path,
+                    "latest_metadata_path": meta_path,
+                    "combo_dir": combo_dir,
+                },
+                event=f"Measuring point {idx + 1}/{total_points} at {az:+.1f}°",
+            )
 
             print("[SA] Arming per-point MAX HOLD capture")
             print(f"[SA]   Integrating for {hold_s:.2f} s")
@@ -227,6 +488,46 @@ def run_single_azimuth_sweep(
                 f"Fpk = {pk_f_hz/1e6:.6f} MHz"
             )
 
+            update_woym(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                last_measurement={
+                    "orientation": orientation,
+                    "polarisation": polarisation,
+                    "antenna": antenna,
+                    "power_level": power_level,
+                    "channel": channel,
+                    "frequency_hz": tx_freq,
+                    "azimuth_deg": az,
+                    "rx_peak_dbm": rx_dbm,
+                    "peak_freq_hz": pk_f_hz,
+                    "timestamp": iso_now(),
+                },
+                current_sweep=build_current_sweep_dict(
+                    sweep_index=sweep_index,
+                    total_sweeps=total_sweeps,
+                    point_index=idx + 1,
+                    total_points=total_points,
+                    axis="azimuth",
+                    orientation=orientation,
+                    polarisation=polarisation,
+                    antenna=antenna,
+                    power_level=power_level,
+                    channel=channel,
+                    frequency_hz=tx_freq,
+                ),
+                artifacts={
+                    "latest_csv_path": csv_path,
+                    "latest_plot_path": plot_png_path,
+                    "latest_metadata_path": meta_path,
+                    "combo_dir": combo_dir,
+                },
+                event=(
+                    f"Measured az {az:+.1f}° "
+                    f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
+                ),
+            )
+
             is_first_point = last_plot_az is None
             moved_enough = (
                 last_plot_az is not None
@@ -235,6 +536,24 @@ def run_single_azimuth_sweep(
             is_final_point = idx == steps
 
             if is_first_point or moved_enough or is_final_point:
+                update_woym(
+                    run_woym_path=run_woym_path,
+                    latest_woym_path=latest_woym_path,
+                    current_state={
+                        "state": "plotting",
+                        "message": f"Updating live plot at {az:+.1f}°",
+                        "target": {
+                            "azimuth_deg": az,
+                        },
+                    },
+                    artifacts={
+                        "latest_csv_path": csv_path,
+                        "latest_plot_path": plot_png_path,
+                        "latest_metadata_path": meta_path,
+                        "combo_dir": combo_dir,
+                    },
+                    event=f"Updating live plot at {az:+.1f}°",
+                )
                 write_partial_polar_plot(csv_path, plot_png_path)
                 last_plot_az = az
 
@@ -247,6 +566,44 @@ def run_single_azimuth_sweep(
 
         current_az = 0.0
         print("[POS] Software azimuth reset to 0°")
+
+        update_woym(
+            run_woym_path=run_woym_path,
+            latest_woym_path=latest_woym_path,
+            current_state={
+                "state": "idle",
+                "message": (
+                    f"Completed sweep {sweep_index}/{total_sweeps} "
+                    f"for ORI={orientation} POL={polarisation} ANT={antenna} "
+                    f"PWR={power_level} CH={channel}"
+                ),
+                "target": {},
+            },
+            current_sweep=build_current_sweep_dict(
+                sweep_index=sweep_index,
+                total_sweeps=total_sweeps,
+                point_index=total_points,
+                total_points=total_points,
+                axis="azimuth",
+                orientation=orientation,
+                polarisation=polarisation,
+                antenna=antenna,
+                power_level=power_level,
+                channel=channel,
+                frequency_hz=tx_freq,
+            ),
+            artifacts={
+                "latest_csv_path": csv_path,
+                "latest_plot_path": plot_png_path,
+                "latest_metadata_path": meta_path,
+                "combo_dir": combo_dir,
+            },
+            event=(
+                f"Completed sweep {sweep_index}/{total_sweeps}: "
+                f"ORI={orientation} POL={polarisation} ANT={antenna} "
+                f"PWR={power_level} CH={channel}"
+            ),
+        )
 
 
 def run(params, equip):
@@ -262,6 +619,11 @@ def run(params, equip):
 
     outdir = params["output_dir"]
     os.makedirs(outdir, exist_ok=True)
+
+    run_woym_path = params.get("woym_path", "")
+    latest_woym_path = params.get("latest_woym_path", "")
+    current_group = params.get("current_group", "")
+    current_test_method = params.get("current_test_method", "1_meas_azimuth")
 
     # ---------------- YAML parameters ----------------
     dut_product = params.get("DUT_product", "Unknown")
@@ -300,6 +662,14 @@ def run(params, equip):
     rbw_hz = int(sa_cfg.get("rbw_hz", sa_cfg.get("RBW", 10_000)))
     vbw_hz = int(sa_cfg.get("vbw_hz", sa_cfg.get("VBW", 10_000)))
 
+    total_sweeps = (
+        len(orientations)
+        * len(polarisations)
+        * len(antennas)
+        * len(power_levels)
+        * len(channels)
+    )
+
     print("[CFG] Parsed YAML parameters:")
     print(f"      DUT product        : {dut_product}")
     print(f"      DUT serial         : {dut_serial_number}")
@@ -316,6 +686,7 @@ def run(params, equip):
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
     print(f"      Live plot every    : {plot_every_deg:.1f}°")
+    print(f"      Total sweeps       : {total_sweeps}")
     print(f"      Channels           : {channels}")
     print(f"      Power levels       : {power_levels}")
     print(f"      Antennas           : {antennas}")
@@ -324,6 +695,39 @@ def run(params, equip):
     print(f"      SA RBW             : {rbw_hz/1e3:.1f} kHz")
     print(f"      SA VBW             : {vbw_hz/1e3:.1f} kHz")
 
+    update_woym(
+        run_woym_path=run_woym_path,
+        latest_woym_path=latest_woym_path,
+        current_test_group=current_group,
+        current_test_method=current_test_method,
+        status="running",
+        current_state={
+            "state": "configuring",
+            "message": f"Preparing {current_test_method}",
+            "target": {},
+        },
+        current_sweep={
+            "sweep_index": 0,
+            "total_sweeps": total_sweeps,
+            "point_index": 0,
+            "total_points": 0,
+            "axis": axis,
+            "orientation": "",
+            "polarisation": "",
+            "antenna": "",
+            "power_level": "",
+            "channel": "",
+            "frequency_hz": "",
+        },
+        error={
+            "status": "none",
+            "message": "",
+            "where": "",
+            "timestamp": "",
+        },
+        event=f"Loaded test config for {current_test_method}",
+    )
+
     sg.open()
     try:
         combo_index = 0
@@ -331,18 +735,42 @@ def run(params, equip):
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
 
-        # Manual-change dimensions outermost
         for orientation in orientations:
+            update_woym(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                current_state={
+                    "state": "configuring",
+                    "message": f"Waiting for manual DUT orientation change to '{orientation}'",
+                    "target": {
+                        "orientation": orientation,
+                    },
+                },
+                event=f"Awaiting DUT orientation change: {orientation}",
+            )
+
             prompt_manual_change(
                 f"Set the DUT orientation to '{orientation}'."
             )
 
             for pol in polarisations:
+                update_woym(
+                    run_woym_path=run_woym_path,
+                    latest_woym_path=latest_woym_path,
+                    current_state={
+                        "state": "configuring",
+                        "message": f"Waiting for manual polarisation change to '{pol}'",
+                        "target": {
+                            "polarisation": pol,
+                        },
+                    },
+                    event=f"Awaiting polarisation change: {pol}",
+                )
+
                 prompt_manual_change(
                     f"Set the manual test setup to polarisation '{pol}'."
                 )
 
-                # Automated dimensions innermost
                 for antenna in antennas:
                     for power_level in power_levels:
                         for channel in channels:
@@ -357,19 +785,6 @@ def run(params, equip):
                                 f"({tx_freq/1e6:.3f} MHz)"
                             )
                             print("#" * 90)
-
-                            # Configure source
-                            sg.set_antenna(antenna)
-                            sg.set_power_level(power_level)
-                            sg.set_channel(channel)
-
-                            # Configure analyser
-                            print("\n[SA] Configuring spectrum analyser (narrowband mode)")
-                            print(
-                                f"[SA]   Center = {tx_freq/1e6:.6f} MHz | "
-                                f"Span = {span_hz/1e3:.1f} kHz"
-                            )
-                            sa.configure_narrowband(center_hz=tx_freq, span_hz=span_hz)
 
                             token_ori = sanitize_token(orientation)
                             token_pol = sanitize_token(pol)
@@ -435,7 +850,63 @@ def run(params, equip):
                             print(f"[OUT]  CSV output  → {csv_path}")
                             print(f"[OUT]  Plot output → {plot_png_path}")
 
-                            # Start RF
+                            update_woym(
+                                run_woym_path=run_woym_path,
+                                latest_woym_path=latest_woym_path,
+                                current_state={
+                                    "state": "configuring",
+                                    "message": (
+                                        f"Configuring sweep {combo_index}/{total_sweeps} "
+                                        f"ORI={orientation} POL={pol} ANT={antenna} "
+                                        f"PWR={power_level} CH={channel}"
+                                    ),
+                                    "target": {},
+                                },
+                                current_sweep=build_current_sweep_dict(
+                                    sweep_index=combo_index,
+                                    total_sweeps=total_sweeps,
+                                    point_index=0,
+                                    total_points=int((2 * maxa) / step) + 1,
+                                    axis=axis,
+                                    orientation=orientation,
+                                    polarisation=pol,
+                                    antenna=antenna,
+                                    power_level=power_level,
+                                    channel=channel,
+                                    frequency_hz=tx_freq,
+                                ),
+                                artifacts={
+                                    "latest_csv_path": csv_path,
+                                    "latest_plot_path": plot_png_path,
+                                    "latest_metadata_path": meta_path,
+                                    "combo_dir": combo_dir,
+                                },
+                                error={
+                                    "status": "none",
+                                    "message": "",
+                                    "where": "",
+                                    "timestamp": "",
+                                },
+                                event=(
+                                    f"Prepared sweep {combo_index}/{total_sweeps}: "
+                                    f"ORI={orientation} POL={pol} ANT={antenna} "
+                                    f"PWR={power_level} CH={channel}"
+                                ),
+                            )
+
+                            # Configure source
+                            sg.set_antenna(antenna)
+                            sg.set_power_level(power_level)
+                            sg.set_channel(channel)
+
+                            # Configure analyser
+                            print("\n[SA] Configuring spectrum analyser (narrowband mode)")
+                            print(
+                                f"[SA]   Center = {tx_freq/1e6:.6f} MHz | "
+                                f"Span = {span_hz/1e3:.1f} kHz"
+                            )
+                            sa.configure_narrowband(center_hz=tx_freq, span_hz=span_hz)
+
                             print("[TX] Starting RXCC RF")
                             sg.rf_on()
                             try:
@@ -444,19 +915,63 @@ def run(params, equip):
                                     sa=sa,
                                     csv_path=csv_path,
                                     plot_png_path=plot_png_path,
+                                    run_woym_path=run_woym_path,
+                                    latest_woym_path=latest_woym_path,
+                                    current_group=current_group,
+                                    current_test_method=current_test_method,
+                                    orientation=orientation,
+                                    polarisation=pol,
+                                    antenna=antenna,
+                                    power_level=power_level,
+                                    channel=channel,
+                                    tx_freq=tx_freq,
+                                    sweep_index=combo_index,
+                                    total_sweeps=total_sweeps,
                                     maxa=maxa,
                                     step=step,
                                     dwell_s=dwell_s,
                                     hold_s=hold_s,
                                     lowest_level_dbm=lowest_level_dbm,
                                     plot_every_deg=plot_every_deg,
+                                    combo_dir=combo_dir,
+                                    meta_path=meta_path,
                                 )
+                            except Exception as e:
+                                set_woym_error(
+                                    run_woym_path,
+                                    latest_woym_path,
+                                    f"Azimuth sweep failed: {e}",
+                                    "1_meas_azimuth.run_single_azimuth_sweep",
+                                )
+                                raise
                             finally:
                                 print("[TX] Stopping RXCC RF")
                                 sg.rf_off()
 
+    except Exception:
+        raise
     finally:
-        sg.close()
+        try:
+            sg.close()
+        except Exception as e:
+            set_woym_error(
+                run_woym_path,
+                latest_woym_path,
+                f"Signal generator close failed: {e}",
+                "1_meas_azimuth.run/finally",
+            )
+            raise
+
+    update_woym(
+        run_woym_path=run_woym_path,
+        latest_woym_path=latest_woym_path,
+        current_state={
+            "state": "idle",
+            "message": f"{current_test_method} complete",
+            "target": {},
+        },
+        event=f"{current_test_method} complete",
+    )
 
     print("\n====================================================")
     print("[1_meas_azimuth] COMPLETE")

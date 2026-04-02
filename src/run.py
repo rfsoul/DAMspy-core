@@ -1,17 +1,17 @@
 """
 DAMspy – run.py
 
-Updates in this version:
-- Top-level output folder name is derived from the first test YAML using:
-  current_group, timestamp, DUT_product, DUT_serial_number,
-  foldername_comment, orientations, channels, power levels,
-  polarisations, step size, and RX antenna.
-- Copies the source YAML file(s) used for the run into the top-level run folder
-  using their original filenames.
-- Leaves per-test measurement logic unchanged.
+This version:
+- builds the top-level output folder name from the first test YAML
+- copies the source YAML file(s) used for the run into the top-level run folder
+- creates and maintains WOYM runtime state files:
+    - <run_root>/woym.json
+    - <DAMspy_logs>/latest_woym.json
+- passes WOYM paths and basic run context into each test method
 """
 
 import importlib.util
+import json
 import re
 import shutil
 import sys
@@ -44,9 +44,7 @@ def import_test_module(py_path: Path):
 
 
 def sanitize_windows_path(name: str) -> str:
-    """
-    Remove invalid Windows filename characters and normalise whitespace.
-    """
+    """Remove invalid Windows filename characters and normalise whitespace."""
     safe = "".join(c for c in str(name) if c not in r'<>:"/\|?*')
     safe = safe.replace(" ", "_")
     safe = re.sub(r"_+", "_", safe)
@@ -62,7 +60,7 @@ def ensure_list(value):
     return [value]
 
 
-def list_token(prefix: str, values) -> str | None:
+def list_token(prefix: str, values):
     values = ensure_list(values)
     if not values:
         return None
@@ -70,7 +68,7 @@ def list_token(prefix: str, values) -> str | None:
     return f"{prefix}_{joined}"
 
 
-def optional_token(value) -> str | None:
+def optional_token(value):
     if value is None:
         return None
     text = sanitize_windows_path(value)
@@ -122,9 +120,7 @@ def resolve_runtime_mode(repo_root: Path) -> str:
 
 
 def build_output_folder_name(current_group: str, timestamp: str, first_params: dict) -> str:
-    """
-    Build the top-level run folder name from the current test group and first YAML.
-    """
+    """Build the top-level run folder name from the current test group and first YAML."""
     dut_product = first_params.get("DUT_product", "UnknownDUT")
     dut_serial_number = first_params.get("DUT_serial_number", "UnknownSerial")
     foldername_comment = first_params.get("foldername_comment")
@@ -154,6 +150,96 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     ]
 
     return "-".join(part for part in parts if part)
+
+
+def iso_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def write_json_atomic(path: Path, payload: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    tmp_path.replace(path)
+
+
+def append_recent_event(woym: dict, event: str, limit: int = 20):
+    events = woym.setdefault("recent_events", [])
+    events.append({
+        "timestamp": iso_now(),
+        "event": event,
+    })
+    if len(events) > limit:
+        del events[:-limit]
+
+
+def write_woym(woym: dict, run_woym_path: Path, latest_woym_path: Path):
+    woym["updated_at"] = iso_now()
+    write_json_atomic(run_woym_path, woym)
+    write_json_atomic(latest_woym_path, woym)
+
+
+def build_initial_woym(
+    *,
+    current_group: str,
+    output_root: Path,
+    run_woym_path: Path,
+    latest_woym_path: Path,
+) -> dict:
+    return {
+        "status": "initialising",
+        "current_test_group": current_group,
+        "current_test_method": "",
+        "current_state": {
+            "state": "initialising",
+            "message": "Preparing DAMspy run",
+            "target": {},
+        },
+        "current_sweep": {
+            "sweep_index": 0,
+            "total_sweeps": 0,
+            "point_index": 0,
+            "total_points": 0,
+            "axis": "",
+            "orientation": "",
+            "polarisation": "",
+            "antenna": "",
+            "power_level": "",
+            "channel": "",
+            "frequency_hz": "",
+        },
+        "last_measurement": {
+            "orientation": "",
+            "polarisation": "",
+            "antenna": "",
+            "power_level": "",
+            "channel": "",
+            "frequency_hz": "",
+            "azimuth_deg": "",
+            "rx_peak_dbm": "",
+            "peak_freq_hz": "",
+            "timestamp": "",
+        },
+        "artifacts": {
+            "run_root": str(output_root),
+            "woym_path": str(run_woym_path),
+            "latest_woym_path": str(latest_woym_path),
+            "latest_csv_path": "",
+            "latest_plot_path": "",
+            "latest_metadata_path": "",
+            "latest_yaml_path": "",
+            "combo_dir": "",
+        },
+        "error": {
+            "status": "none",
+            "message": "",
+            "where": "",
+            "timestamp": "",
+        },
+        "recent_events": [],
+        "updated_at": iso_now(),
+    }
 
 
 # ----------------------------------------------------------
@@ -211,10 +297,27 @@ def main():
     output_root = root / "DAMspy_logs" / folder_name
     output_root.mkdir(parents=True, exist_ok=True)
 
+    run_woym_path = output_root / "woym.json"
+    latest_woym_path = root / "DAMspy_logs" / "latest_woym.json"
+
     print(f"[LOG] Output directory: {output_root}")
+    print(f"[WOYM] Run WOYM path: {run_woym_path}")
+    print(f"[WOYM] Latest WOYM path: {latest_woym_path}")
+
+    woym = build_initial_woym(
+        current_group=current_group,
+        output_root=output_root,
+        run_woym_path=run_woym_path,
+        latest_woym_path=latest_woym_path,
+    )
+    append_recent_event(woym, "DAMspy run initialised")
+    write_woym(woym, run_woym_path, latest_woym_path)
 
     # Copy the first YAML immediately so the run root is self-describing
     copy_yaml_to_output(first_yaml_path, output_root)
+    woym["artifacts"]["latest_yaml_path"] = str(output_root / first_yaml_path.name)
+    append_recent_event(woym, f"Copied YAML to run root: {first_yaml_path.name}")
+    write_woym(woym, run_woym_path, latest_woym_path)
 
     # ----------------------------------------------------------
     # Begin running each test
@@ -224,40 +327,130 @@ def main():
         print(f"➡ Running test: {test_name}")
         print("=" * 100)
 
+        woym["status"] = "running"
+        woym["current_test_method"] = test_name
+        woym["current_state"] = {
+            "state": "configuring",
+            "message": f"Preparing test method '{test_name}'",
+            "target": {},
+        }
+        append_recent_event(woym, f"Starting test method: {test_name}")
+        write_woym(woym, run_woym_path, latest_woym_path)
+
         # Load individual test YAML
         yaml_path = root / "config" / "test_settings_config" / current_group / f"{test_name}.yaml"
         if not yaml_path.exists():
-            print(f"[ERROR] YAML missing: {yaml_path}")
+            error_msg = f"YAML missing: {yaml_path}"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/main",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         params = load_yaml(yaml_path)
         if params is None:
-            print(f"[ERROR] YAML unreadable: {yaml_path}")
+            error_msg = f"YAML unreadable: {yaml_path}"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/main",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
-        # Copy each test YAML to the run root using its original filename.
-        # This future-proofs multi-test groups.
         copy_yaml_to_output(yaml_path, output_root)
+        woym["artifacts"]["latest_yaml_path"] = str(output_root / yaml_path.name)
+        append_recent_event(woym, f"Copied YAML to run root: {yaml_path.name}")
+        write_woym(woym, run_woym_path, latest_woym_path)
 
-        # Pass the SAME top-level output directory to every test
+        # Pass common runtime context to every test
         params["output_dir"] = str(output_root)
+        params["woym_path"] = str(run_woym_path)
+        params["latest_woym_path"] = str(latest_woym_path)
+        params["current_group"] = current_group
+        params["current_test_method"] = test_name
 
         # ----------------------------------------------------------
         # Load test Python file
         # ----------------------------------------------------------
         py_path = root / "test_methods" / current_group / f"{test_name}.py"
         if not py_path.exists():
-            print(f"[ERROR] Script missing: {py_path}")
+            error_msg = f"Script missing: {py_path}"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/main",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         try:
             test_module = import_test_module(py_path)
         except Exception as e:
-            print(f"[ERROR] Could not import {test_name}: {e}")
+            error_msg = f"Could not import {test_name}: {e}"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/import_test_module",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         if not hasattr(test_module, "run"):
-            print(f"[ERROR] Test {test_name} missing run() function")
+            error_msg = f"Test {test_name} missing run() function"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/main",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         # ----------------------------------------------------------
@@ -265,8 +458,37 @@ def main():
         # ----------------------------------------------------------
         try:
             test_module.run(params, equip_mgr)
+            woym["status"] = "running"
+            woym["error"] = {
+                "status": "none",
+                "message": "",
+                "where": "",
+                "timestamp": "",
+            }
+            woym["current_state"] = {
+                "state": "idle",
+                "message": f"Completed test method '{test_name}'",
+                "target": {},
+            }
+            append_recent_event(woym, f"Completed test method: {test_name}")
+            write_woym(woym, run_woym_path, latest_woym_path)
         except Exception as e:
-            print(f"[ERROR] Test {test_name} failed: {e}")
+            error_msg = f"Test {test_name} failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": f"{test_name}.run",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
 
     # ----------------------------------------------------------
     # Run post-processing (group-level)
@@ -283,24 +505,84 @@ def main():
         )
 
         if not pp_path.exists():
-            print(f"[WARN] Post-processing script missing: {pp_path}")
+            error_msg = f"Post-processing script missing: {pp_path}"
+            print(f"[WARN] {error_msg}")
+            append_recent_event(woym, error_msg)
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         try:
             pp_module = import_test_module(pp_path)
         except Exception as e:
-            print(f"[ERROR] Could not import post-processing {pp_name}: {e}")
+            error_msg = f"Could not import post-processing {pp_name}: {e}"
+            print(f"[ERROR] {error_msg}")
+            append_recent_event(woym, error_msg)
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/postprocessing_import",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         if not hasattr(pp_module, "run"):
-            print(f"[ERROR] Post-processing {pp_name} missing run()")
+            error_msg = f"Post-processing {pp_name} missing run()"
+            print(f"[ERROR] {error_msg}")
+            append_recent_event(woym, error_msg)
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/postprocessing",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            write_woym(woym, run_woym_path, latest_woym_path)
             continue
 
         try:
             print(f"➡ Post-processing: {pp_name}")
             pp_module.run(str(output_root))
+            append_recent_event(woym, f"Completed post-processing: {pp_name}")
+            write_woym(woym, run_woym_path, latest_woym_path)
         except Exception as e:
-            print(f"[ERROR] Post-processing {pp_name} failed: {e}")
+            error_msg = f"Post-processing {pp_name} failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            append_recent_event(woym, error_msg)
+            woym["status"] = "error"
+            woym["error"] = {
+                "status": "active",
+                "message": error_msg,
+                "where": "run.py/postprocessing_run",
+                "timestamp": iso_now(),
+            }
+            woym["current_state"] = {
+                "state": "error",
+                "message": error_msg,
+                "target": {},
+            }
+            write_woym(woym, run_woym_path, latest_woym_path)
+
+    if woym["status"] != "error":
+        woym["status"] = "complete"
+        woym["current_state"] = {
+            "state": "complete",
+            "message": "All tests finished",
+            "target": {},
+        }
+        append_recent_event(woym, "DAMspy run complete")
+        write_woym(woym, run_woym_path, latest_woym_path)
 
     print("\n=== All tests finished. ===")
 
