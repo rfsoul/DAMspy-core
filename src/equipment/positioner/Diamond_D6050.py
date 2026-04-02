@@ -5,10 +5,12 @@ import serial
 
 class DiamondD6050:
     """
-    Diamond Engineering D6050 driver (minimal update)
-    - Correct RF sign convention: CW = negative, CCW = positive
-    - Live encoder prints during motion
-    - No shortest-path / cable safety logic added yet
+    Diamond Engineering D6050 driver
+
+    Logging behaviour:
+    - High-level move start / completion is always printed.
+    - Low-level encoder polling chatter is only printed when
+      cfg["verbose_logging"] is true.
     """
 
     def __init__(self, cfg):
@@ -21,6 +23,8 @@ class DiamondD6050:
         self.az_steps_per_deg = cfg.get("az_steps_per_deg", 800)
         self.el_steps_per_deg = cfg.get("el_steps_per_deg", 800)
 
+        self.verbose_logging = bool(cfg.get("verbose_logging", False))
+
         self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
         print(f"[DiamondD6050] Connected on {self.port} @ {self.baud}")
 
@@ -30,6 +34,13 @@ class DiamondD6050:
             "X0P3,163,81,10", "X0H4", "X0B500", "X0E3000", "X0S8"
         ]:
             self._send(cmd)
+
+    # -----------------------------------------------------------
+    # Logging helper
+    # -----------------------------------------------------------
+    def _vprint(self, message: str):
+        if self.verbose_logging:
+            print(message)
 
     # -----------------------------------------------------------
     # Low-level
@@ -47,7 +58,7 @@ class DiamondD6050:
         try:
             nums = re.findall(r'[-+]?\d+', resp)
             return int(nums[-1])
-        except:
+        except Exception:
             return None
 
     # -----------------------------------------------------------
@@ -68,7 +79,7 @@ class DiamondD6050:
         if initial is None:
             initial = 0.0
 
-        print("[POS] Waiting for motion to begin…")
+        self._vprint("[POS] Waiting for motion to begin…")
 
         for _ in range(25):  # ~5 seconds
             time.sleep(0.2)
@@ -76,17 +87,17 @@ class DiamondD6050:
             if ang is None:
                 continue
             if abs(ang - initial) > 0.2:
-                print("[POS] Motion started.")
+                self._vprint("[POS] Motion started.")
                 return True
 
-        print("[POS] Motion start not detected (continuing anyway).")
+        self._vprint("[POS] Motion start not detected (continuing anyway).")
         return True
 
     # -----------------------------------------------------------
-    # Wait for motion stop (with live prints)
+    # Wait for motion stop
     # -----------------------------------------------------------
     def wait_until_stopped(self):
-        print("[POS] Monitoring movement via encoder…")
+        self._vprint("[POS] Monitoring movement via encoder…")
 
         last = None
         stable = 0
@@ -94,18 +105,19 @@ class DiamondD6050:
         while True:
             ang = self.get_current_az_deg()
             if ang is None:
-                print("[POS] Encoder read failed, retrying…")
+                self._vprint("[POS] Encoder read failed, retrying…")
                 time.sleep(0.2)
                 continue
 
-            steps = int(-ang * self.az_steps_per_deg)  # invert back for raw display
-            print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f}°)")
+            if self.verbose_logging:
+                steps = int(-ang * self.az_steps_per_deg)  # invert back for raw display
+                print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f}°)")
 
             if last is not None:
                 if abs(ang - last) < 0.2:
                     stable += 1
                     if stable >= 6:
-                        print(f"[POS] Movement stopped at {ang:+.2f}°")
+                        self._vprint(f"[POS] Movement stopped at {ang:+.2f}°")
                         return ang
                 else:
                     stable = 0
