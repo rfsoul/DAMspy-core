@@ -15,6 +15,7 @@ import csv
 import json
 import math
 import os
+import tempfile
 from datetime import datetime
 from time import sleep, time
 
@@ -60,10 +61,48 @@ def iso_now() -> str:
 
 def write_json_atomic(path: str, payload: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-    os.replace(tmp_path, path)
+    last_error = None
+
+    # Windows readers can briefly lock the destination without delete-share,
+    # which breaks os.replace even though a normal overwrite would succeed.
+    for attempt in range(8):
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=os.path.basename(path) + ".",
+            suffix=".tmp",
+            dir=os.path.dirname(path),
+            text=True,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            return
+        except PermissionError as e:
+            last_error = e
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+            if attempt == 7:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                return
+
+            sleep(0.05 * (attempt + 1))
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    if last_error is not None:
+        raise last_error
 
 
 def load_woym(path: str) -> dict:

@@ -12,11 +12,14 @@ This version:
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
+from time import sleep
 
 import yaml
 
@@ -158,10 +161,48 @@ def iso_now() -> str:
 
 def write_json_atomic(path: Path, payload: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-    tmp_path.replace(path)
+    last_error = None
+
+    # Windows readers can briefly lock the destination without delete-share,
+    # which breaks os.replace even though a normal overwrite would succeed.
+    for attempt in range(8):
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+            text=True,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+            return
+        except PermissionError as e:
+            last_error = e
+            try:
+                os.remove(tmp_name)
+            except OSError:
+                pass
+
+            if attempt == 7:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                return
+
+            sleep(0.05 * (attempt + 1))
+        except Exception:
+            try:
+                os.remove(tmp_name)
+            except OSError:
+                pass
+            raise
+
+    if last_error is not None:
+        raise last_error
 
 
 def append_recent_event(woym: dict, event: str, limit: int = 20):
