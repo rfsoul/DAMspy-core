@@ -17,6 +17,7 @@ class BB60Spike:
     def __init__(self, cfg):
         host = cfg.get("host", "127.0.0.1")
         port = cfg.get("port", 5025)
+        self._verbose_maxhold = bool(cfg.get("verbose_maxhold", False))
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
@@ -267,7 +268,8 @@ class BB60Spike:
         # Time-gated discrete sweeps
         for _ in range(600):  # safety cap only
             elapsed = time.monotonic() - t_start
-            print(f"[MAXH] t = {elapsed:0.3f} s")
+            if self._verbose_maxhold:
+                print(f"[MAXH] t = {elapsed:0.3f} s")
             if elapsed >= hold_s:
                 break
 

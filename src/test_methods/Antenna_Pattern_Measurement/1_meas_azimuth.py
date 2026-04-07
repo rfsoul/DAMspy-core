@@ -31,7 +31,7 @@ def rxcc_channel_to_frequency_hz(channel: int) -> int:
     channel = int(channel)
     if not (0 <= channel <= 80):
         raise ValueError(f"RXCC channel must be 0..80, got {channel}")
-    return 2_400_000_000 + channel * 500_000
+    return 2_400_000_000 + channel * 1_000_000
 
 
 def ensure_list(value, name: str):
