@@ -1055,7 +1055,19 @@ def run(params, equip):
                                 f"RBW={rbw_hz/1e3:.1f} kHz "
                                 f"VBW={vbw_hz/1e3:.1f} kHz"
                             )
-                            sa.configure_narrowband(center_hz=tx_freq, span_hz=span_hz)
+                            verified_sa = sa.configure_narrowband(
+                                center_hz=tx_freq,
+                                span_hz=span_hz,
+                                rbw_hz=rbw_hz,
+                                vbw_hz=vbw_hz,
+                            )
+                            print(
+                                "[SA] Verified retune: "
+                                f"CENT={verified_sa['center_hz']/1e6:.6f} MHz "
+                                f"SPAN={verified_sa['span_hz']/1e3:.1f} kHz "
+                                f"RBW={verified_sa['rbw_hz']/1e3:.1f} kHz "
+                                f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
+                            )
 
                             print("[TX] Starting RXCC RF")
                             sg.rf_on()

@@ -22,6 +22,11 @@ class BB60Spike:
         self.sock.connect((host, port))
         print(f"[BB60Spike] Connected to Spike at {host}:{port}")
 
+        self._configured_center_hz = None
+        self._configured_span_hz = None
+        self._configured_rbw_hz = None
+        self._configured_vbw_hz = None
+
         # Disable GUI immediately for safe SCPI-only control
         self._send(":DISP:ENAB OFF")
         print("[Spike] GUI disabled (SCPI safe mode).")
@@ -35,6 +40,79 @@ class BB60Spike:
     def _query(self, cmd: str) -> str:
         self._send(cmd)
         return self.sock.recv(1024 * 1024).decode().strip()
+
+    def _query_float(self, cmd: str) -> float:
+        return float(self._query(cmd))
+
+    def _wait_for_opc(self):
+        self._query("*OPC?")
+
+    @staticmethod
+    def _close_enough(actual: float, expected: float, tol: float = 1.0) -> bool:
+        return abs(actual - expected) <= tol
+
+    def _assert_measurement_state(
+        self,
+        *,
+        center_hz: float,
+        span_hz: float,
+        rbw_hz: float | None,
+        vbw_hz: float | None,
+        retries: int = 3,
+    ) -> dict:
+        """
+        Reassert the full narrowband state and verify it by readback.
+
+        Spike's GUI/measurement state can drift between runs, so the caller
+        should not assume a previous channel's settings are still active.
+        """
+        last_state = None
+
+        for attempt in range(1, retries + 1):
+            self._send(":DISP:ENAB OFF")
+            self._send(":INIT:CONT OFF")
+            self._send(":DET POS")
+            self._send(":AVER:STAT OFF")
+            self._send(":DISP:TRAC:AVER OFF")
+            self._send(":TRAC:TYPE WRIT")
+            self._send(":TRAC:CLE")
+
+            if rbw_hz is not None:
+                self._send(f":BAND:RES {float(rbw_hz)}")
+            if vbw_hz is not None:
+                self._send(f":BAND:VID {float(vbw_hz)}")
+
+            self._send(f":FREQ:CENT {float(center_hz)}")
+            self._send(f":FREQ:SPAN {float(span_hz)}")
+            self._wait_for_opc()
+
+            last_state = {
+                "center_hz": self._query_float(":FREQ:CENT?"),
+                "span_hz": self._query_float(":FREQ:SPAN?"),
+                "rbw_hz": self._query_float(":BAND:RES?") if rbw_hz is not None else None,
+                "vbw_hz": self._query_float(":BAND:VID?") if vbw_hz is not None else None,
+            }
+
+            center_ok = self._close_enough(last_state["center_hz"], float(center_hz))
+            span_ok = self._close_enough(last_state["span_hz"], float(span_hz))
+            rbw_ok = rbw_hz is None or self._close_enough(last_state["rbw_hz"], float(rbw_hz))
+            vbw_ok = vbw_hz is None or self._close_enough(last_state["vbw_hz"], float(vbw_hz))
+
+            if center_ok and span_ok and rbw_ok and vbw_ok:
+                return last_state
+
+            print(
+                f"[Spike] Retune verify failed on attempt {attempt}/{retries}: "
+                f"center={last_state['center_hz']:.0f}Hz span={last_state['span_hz']:.0f}Hz "
+                f"rbw={last_state['rbw_hz']} vbw={last_state['vbw_hz']}"
+            )
+            time.sleep(0.1)
+
+        raise RuntimeError(
+            "Spike narrowband retune did not verify. "
+            f"Expected center={center_hz}Hz span={span_hz}Hz rbw={rbw_hz} vbw={vbw_hz}; "
+            f"last readback={last_state}"
+        )
 
     # ---------------------------------------------------------
     # SCPI single sweep (PEAK, 120k RBW/VBW)
@@ -113,16 +191,27 @@ class BB60Spike:
         plt.close()
         print(f"[Spike] MaxHold plot saved → {path}")
 
-    def configure_narrowband(self, center_hz: float, span_hz: float):
+    def configure_narrowband(
+        self,
+        center_hz: float,
+        span_hz: float,
+        rbw_hz: float | None = None,
+        vbw_hz: float | None = None,
+    ):
         """
         Configure Spike as a narrowband tuned receiver.
         """
-        self._send(":INIT:CONT OFF")
-        self._send(":DET POS")              # Peak detector
-        self._send(":AVER:STAT OFF")
-        self._send(":DISP:TRAC:AVER OFF")
-        self._send(f":FREQ:CENT {center_hz}")
-        self._send(f":FREQ:SPAN {span_hz}")
+        verified = self._assert_measurement_state(
+            center_hz=center_hz,
+            span_hz=span_hz,
+            rbw_hz=rbw_hz,
+            vbw_hz=vbw_hz,
+        )
+        self._configured_center_hz = float(center_hz)
+        self._configured_span_hz = float(span_hz)
+        self._configured_rbw_hz = None if rbw_hz is None else float(rbw_hz)
+        self._configured_vbw_hz = None if vbw_hz is None else float(vbw_hz)
+        return verified
 
 
     def read_peak_maxhold(self, hold_s: float):
@@ -147,6 +236,16 @@ class BB60Spike:
         -------
         (peak_freq_hz, peak_dbm)
         """
+
+        if self._configured_center_hz is None or self._configured_span_hz is None:
+            raise RuntimeError("Spike narrowband mode has not been configured.")
+
+        self._assert_measurement_state(
+            center_hz=self._configured_center_hz,
+            span_hz=self._configured_span_hz,
+            rbw_hz=self._configured_rbw_hz,
+            vbw_hz=self._configured_vbw_hz,
+        )
 
         # Ensure no continuous acquisition
         self._send(":INIT:CONT OFF")
