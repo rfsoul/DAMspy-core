@@ -392,6 +392,7 @@ def run_single_azimuth_sweep(
     tx_freq,
     sweep_index: int,
     total_sweeps: int,
+    sweep_mode: str,
     maxa: float,
     step: float,
     dwell_s: float,
@@ -406,12 +407,20 @@ def run_single_azimuth_sweep(
 ):
     current_az = 0.0
     last_plot_az = None
+    boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
 
-    steps = int((2 * maxa) / step)
-    total_points = steps + 1
+    if boresight_only:
+        steps = 0
+        total_points = 1
+        maxa = 0.0
+    else:
+        steps = int((2 * maxa) / step)
+        total_points = steps + 1
 
     def move_rel(delta_deg):
         nonlocal current_az
+        if boresight_only:
+            return
         if abs(delta_deg) < 1e-9:
             print("[POS] Zero move requested – skipping")
             return
@@ -474,6 +483,8 @@ def run_single_azimuth_sweep(
 
         print("[POS] Software azimuth reference set to 0°")
         current_az = 0.0
+        if boresight_only:
+            print("[MODE] Boresight-only capture: positioner movement disabled")
 
         if use_woym:
             update_woym_generic(
@@ -796,6 +807,8 @@ def run(params, equip):
     span_hz = int(sa_cfg.get("span_hz", 10_000))
     rbw_hz = int(sa_cfg.get("rbw_hz", sa_cfg.get("RBW", 10_000)))
     vbw_hz = int(sa_cfg.get("vbw_hz", sa_cfg.get("VBW", 10_000)))
+    boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
+    sweep_point_count = 1 if boresight_only else int((2 * maxa) / step) + 1
 
     total_sweeps = (
         len(orientations)
@@ -1000,7 +1013,7 @@ def run(params, equip):
                                         sweep_index=combo_index,
                                         total_sweeps=total_sweeps,
                                         point_index=0,
-                                        total_points=int((2 * maxa) / step) + 1,
+                                        total_points=sweep_point_count,
                                         axis=axis,
                                         orientation=orientation,
                                         polarisation=pol,
@@ -1090,6 +1103,7 @@ def run(params, equip):
                                     tx_freq=tx_freq,
                                     sweep_index=combo_index,
                                     total_sweeps=total_sweeps,
+                                    sweep_mode=sweep_mode,
                                     maxa=maxa,
                                     step=step,
                                     dwell_s=dwell_s,
