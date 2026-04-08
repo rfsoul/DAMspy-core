@@ -25,6 +25,7 @@ dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
+  device_type: "rxcc"  # "rxcc", "hendrix_tx", or "hendrix_rx"
   channels: [0, 20]   # [0, 20, 40, 60, 80]
   power_levels: [10]
   antennas: ["main", "secondary"]

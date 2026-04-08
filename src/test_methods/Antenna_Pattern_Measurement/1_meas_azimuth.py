@@ -5,7 +5,7 @@
 # Multi-condition version:
 # - manual outer loop for DUT orientation
 # - manual next loop for polarisation
-# - automated inner loops for RXCC antenna / power / channel
+# - automated inner loops for signal-generator device type / antenna / power / channel
 # - one folder per condition combination
 # - live partial polar plot generation during sweep
 # - azimuth-specific WOYM content
@@ -20,6 +20,10 @@ from datetime import datetime
 from time import sleep, time
 
 import matplotlib.pyplot as plt
+
+VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
+NON_RXCC_ANTENNA_LABEL = "n/a"
+NON_RXCC_ANTENNA_TOKEN = "na"
 
 
 def meta_write(path, meta: dict):
@@ -40,6 +44,54 @@ def ensure_list(value, name: str):
     if value is None:
         raise ValueError(f"Missing required list-like field: {name}")
     return [value]
+
+
+def normalize_sig_gen_device_type(value) -> str:
+    if value is None:
+        return "rxcc"
+
+    device_type = str(value).strip().lower()
+    if device_type not in VALID_SIG_GEN_DEVICE_TYPES:
+        raise ValueError(
+            "sig_gen_1.device_type must be one of "
+            f"{sorted(VALID_SIG_GEN_DEVICE_TYPES)}, got {device_type!r}"
+        )
+    return device_type
+
+
+def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
+    device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
+    channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
+    power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
+
+    if device_type == "rxcc":
+        antenna_values = ensure_list(
+            sg_cfg.get("antennas", sg_cfg.get("antenna")),
+            "sig_gen_1.antennas",
+        )
+        antennas = [
+            {
+                "value": antenna,
+                "label": str(antenna),
+                "token": sanitize_token(antenna),
+            }
+            for antenna in antenna_values
+        ]
+    else:
+        antennas = [
+            {
+                "value": None,
+                "label": NON_RXCC_ANTENNA_LABEL,
+                "token": NON_RXCC_ANTENNA_TOKEN,
+            }
+        ]
+
+    return {
+        "device_type": device_type,
+        "channels": channels,
+        "power_levels": power_levels,
+        "antennas": antennas,
+    }
 
 
 def sanitize_token(value) -> str:
@@ -794,15 +846,15 @@ def run(params, equip):
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
 
     sg_cfg = params["sig_gen_1"]
+    sg_sweep_cfg = resolve_sig_gen_sweep_config(sg_cfg)
     sa_cfg = params["spec_an_1"]
     rx_cfg = params.get("rx_path", {})
 
-    channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
-    power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
-    antennas = ensure_list(
-        sg_cfg.get("antennas", sg_cfg.get("antenna")),
-        "sig_gen_1.antennas",
-    )
+    device_type = sg_sweep_cfg["device_type"]
+    channels = sg_sweep_cfg["channels"]
+    power_levels = sg_sweep_cfg["power_levels"]
+    antenna_variants = sg_sweep_cfg["antennas"]
+    antenna_labels = [item["label"] for item in antenna_variants]
 
     span_hz = int(sa_cfg.get("span_hz", 10_000))
     rbw_hz = int(sa_cfg.get("rbw_hz", sa_cfg.get("RBW", 10_000)))
@@ -813,7 +865,7 @@ def run(params, equip):
     total_sweeps = (
         len(orientations)
         * len(polarisations)
-        * len(antennas)
+        * len(antenna_variants)
         * len(power_levels)
         * len(channels)
     )
@@ -826,6 +878,7 @@ def run(params, equip):
     print(f"      Axis               : {axis}")
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Use WOYM          : {use_woym}")
+    print(f"      Device type        : {device_type}")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
     print(f"      Boresight (logical): {bore:.1f}°")
@@ -838,7 +891,7 @@ def run(params, equip):
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      Channels           : {channels}")
     print(f"      Power levels       : {power_levels}")
-    print(f"      Antennas           : {antennas}")
+    print(f"      Antennas           : {antenna_labels}")
     print(f"      RX path            : {rx_cfg}")
     print(f"      SA span            : {span_hz/1e3:.1f} kHz")
     print(f"      SA RBW             : {rbw_hz/1e3:.1f} kHz")
@@ -873,6 +926,12 @@ def run(params, equip):
         )
 
     sg.open()
+    if hasattr(sg, "set_device_type"):
+        sg.set_device_type(device_type)
+    elif device_type != "rxcc":
+        raise RuntimeError(
+            "sig_gen_1.device_type requires a signal-generator driver that supports set_device_type()"
+        )
     try:
         combo_index = 0
 
@@ -917,7 +976,10 @@ def run(params, equip):
                     f"Set the manual test setup to polarisation '{pol}'."
                 )
 
-                for antenna in antennas:
+                for antenna_cfg in antenna_variants:
+                    antenna = antenna_cfg["value"]
+                    antenna_label = antenna_cfg["label"]
+                    antenna_token = antenna_cfg["token"]
                     for power_level in power_levels:
                         for channel in channels:
                             combo_index += 1
@@ -926,7 +988,7 @@ def run(params, equip):
                             print("\n" + "#" * 90)
                             print(
                                 f"[COMBO {combo_index}] "
-                                f"ORI={orientation} | POL={pol} | ANT={antenna} | "
+                                f"ORI={orientation} | POL={pol} | ANT={antenna_label} | "
                                 f"PWR={power_level} | CH={channel} "
                                 f"({tx_freq/1e6:.3f} MHz)"
                             )
@@ -934,7 +996,7 @@ def run(params, equip):
 
                             token_ori = sanitize_token(orientation)
                             token_pol = sanitize_token(pol)
-                            token_ant = sanitize_token(antenna)
+                            token_ant = antenna_token
                             token_pwr = sanitize_token(power_level)
                             token_ch = sanitize_token(channel)
 
@@ -968,6 +1030,7 @@ def run(params, equip):
                                 "step_deg": step,
                                 "height_m": height_m,
                                 "sig_gen_1": {
+                                    "device_type": device_type,
                                     "channel": channel,
                                     "power_level": power_level,
                                     "antenna": antenna,
@@ -1004,7 +1067,7 @@ def run(params, equip):
                                         "state": "configuring",
                                         "message": (
                                             f"Configuring sweep {combo_index}/{total_sweeps} "
-                                            f"ORI={orientation} POL={pol} ANT={antenna} "
+                                            f"ORI={orientation} POL={pol} ANT={antenna_label} "
                                             f"PWR={power_level} CH={channel}"
                                         ),
                                         "target": {},
@@ -1017,7 +1080,7 @@ def run(params, equip):
                                         axis=axis,
                                         orientation=orientation,
                                         polarisation=pol,
-                                        antenna=antenna,
+                                        antenna=antenna_label,
                                         power_level=power_level,
                                         channel=channel,
                                         frequency_hz=tx_freq,
@@ -1036,7 +1099,7 @@ def run(params, equip):
                                     },
                                     event=(
                                         f"Prepared sweep {combo_index}/{total_sweeps}: "
-                                        f"ORI={orientation} POL={pol} ANT={antenna} "
+                                        f"ORI={orientation} POL={pol} ANT={antenna_label} "
                                         f"PWR={power_level} CH={channel}"
                                     ),
                                 )
@@ -1055,7 +1118,8 @@ def run(params, equip):
                                 )
 
                             # Configure source
-                            sg.set_antenna(antenna)
+                            if antenna is not None:
+                                sg.set_antenna(antenna)
                             sg.set_power_level(power_level)
                             sg.set_channel(channel)
 
@@ -1082,7 +1146,7 @@ def run(params, equip):
                                 f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
                             )
 
-                            print("[TX] Starting RXCC RF")
+                            print(f"[TX] Starting {device_type.upper()} RF")
                             sg.rf_on()
                             try:
                                 run_single_azimuth_sweep(
@@ -1097,7 +1161,7 @@ def run(params, equip):
                                     current_test_method=current_test_method,
                                     orientation=orientation,
                                     polarisation=pol,
-                                    antenna=antenna,
+                                    antenna=antenna_label,
                                     power_level=power_level,
                                     channel=channel,
                                     tx_freq=tx_freq,
@@ -1126,7 +1190,7 @@ def run(params, equip):
                                     )
                                 raise
                             finally:
-                                print("[TX] Stopping RXCC RF")
+                                print(f"[TX] Stopping {device_type.upper()} RF")
                                 sg.rf_off()
 
     except Exception:
