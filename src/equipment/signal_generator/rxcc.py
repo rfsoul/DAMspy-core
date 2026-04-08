@@ -14,6 +14,15 @@ class RXCC(SignalGeneratorBase):
     """
     RXCC signal-generator-like driver backed by damspy-rpicontrol.
 
+    Unified TX command examples:
+        curl -X POST http://<pi-ip>:8000/api/devices/tx/commands/start-rf \
+          -H "Content-Type: application/json" \
+          -d '{"channel": 0, "power": 10}'
+
+        curl -X POST http://<pi-ip>:8000/api/devices/tx/commands/stop-rf \
+          -H "Content-Type: application/json" \
+          -d '{}'
+
     This driver is intentionally truthful to the RXCC control model:
     - channel: integer 0..80
     - power_level: integer 0..10
@@ -74,9 +83,12 @@ class RXCC(SignalGeneratorBase):
         """
         if self.is_open:
             try:
-                self.rf_off()
+                self.stop_tx_rf()
             except Exception:
-                pass
+                try:
+                    self.stop_rxcc_rf()
+                except Exception:
+                    pass
         super().close()
 
     # ------------------------------------------------------------------
@@ -102,13 +114,20 @@ class RXCC(SignalGeneratorBase):
             )
         self._antenna = antenna
 
-    def configure(self, *, channel: int, power_level: int, antenna: str) -> None:
+    def configure(
+        self,
+        *,
+        channel: int,
+        power_level: int,
+        antenna: Optional[str] = None,
+    ) -> None:
         """
-        Convenience method for setting all RF-start parameters together.
+        Convenience method for setting RF-start parameters together.
         """
         self.set_channel(channel)
         self.set_power_level(power_level)
-        self.set_antenna(antenna)
+        if antenna is not None:
+            self.set_antenna(antenna)
 
     # ------------------------------------------------------------------
     # SignalGeneratorBase compatibility
@@ -125,10 +144,69 @@ class RXCC(SignalGeneratorBase):
 
     def rf_on(self) -> None:
         """
-        Start RF using the currently cached antenna/channel/power_level.
+        Start RF using the unified Hendrix TX command API.
+        """
+        self.start_tx_rf()
+
+    def rf_off(self) -> None:
+        """
+        Stop RF output using the unified Hendrix TX command API.
+        """
+        self.stop_tx_rf()
+
+    def start_tx_rf(
+        self,
+        *,
+        channel: Optional[int] = None,
+        power: Optional[int] = None,
+    ) -> None:
+        """
+        Start RF using the unified Hendrix TX command API.
         """
         self.ensure_open()
-        self._require_rf_start_parameters()
+
+        if channel is not None:
+            self.set_channel(channel)
+        if power is not None:
+            self.set_power_level(power)
+
+        self._require_tx_rf_start_parameters()
+
+        payload = {
+            "channel": self._channel,
+            "power": self._power_level,
+        }
+        self._request_json("POST", "/api/devices/tx/commands/start-rf", payload=payload)
+        self._rf_on = True
+
+    def stop_tx_rf(self) -> None:
+        """
+        Stop RF output using the unified Hendrix TX command API.
+        """
+        self.ensure_open()
+        self._request_json("POST", "/api/devices/tx/commands/stop-rf", payload={})
+        self._rf_on = False
+
+    def start_rxcc_rf(
+        self,
+        *,
+        antenna: Optional[str] = None,
+        channel: Optional[int] = None,
+        power: Optional[int] = None,
+    ) -> None:
+        """
+        Start RF using the legacy RXCC-specific endpoint.
+        """
+        self.ensure_open()
+
+        if antenna is not None:
+            self.set_antenna(antenna)
+        if channel is not None:
+            self.set_channel(channel)
+        if power is not None:
+            self.set_power_level(power)
+
+        self._require_rxcc_rf_start_parameters()
 
         payload = {
             "antenna": self._antenna,
@@ -138,9 +216,9 @@ class RXCC(SignalGeneratorBase):
         self._request_json("POST", "/api/rf/start", payload=payload)
         self._rf_on = True
 
-    def rf_off(self) -> None:
+    def stop_rxcc_rf(self) -> None:
         """
-        Stop RF output.
+        Stop RF output using the legacy RXCC-specific endpoint.
         """
         self.ensure_open()
         self._request_json("POST", "/api/rf/stop")
@@ -176,18 +254,28 @@ class RXCC(SignalGeneratorBase):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _require_rf_start_parameters(self) -> None:
+    def _require_tx_rf_start_parameters(self) -> None:
         missing = []
         if self._channel is None:
             missing.append("channel")
         if self._power_level is None:
             missing.append("power_level")
+
+        if missing:
+            raise RuntimeError(
+                f"RXCC TX start requires {', '.join(missing)} to be set before starting RF"
+            )
+
+    def _require_rxcc_rf_start_parameters(self) -> None:
+        self._require_tx_rf_start_parameters()
+
+        missing = []
         if self._antenna is None:
             missing.append("antenna")
 
         if missing:
             raise RuntimeError(
-                f"RXCC rf_on() requires {', '.join(missing)} to be set before starting RF"
+                f"RXCC legacy start requires {', '.join(missing)} to be set before starting RF"
             )
 
     def _request_json(

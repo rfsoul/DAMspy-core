@@ -6,8 +6,17 @@ Simple LAN-side test client for damspy-rpicontrol.
 
 What it tests:
 - GET  /health
-- POST /api/rf/start           with JSON payload
-- POST /api/rf/stop
+- POST /api/devices/tx/commands/start-rf with JSON payload
+- POST /api/devices/tx/commands/stop-rf
+
+Unified TX curl examples:
+    curl -X POST http://10.0.1.195:8000/api/devices/tx/commands/start-rf \
+      -H "Content-Type: application/json" \
+      -d '{"channel": 0, "power": 10}'
+
+    curl -X POST http://10.0.1.195:8000/api/devices/tx/commands/stop-rf \
+      -H "Content-Type: application/json" \
+      -d '{}'
 
 Based on the external interface spec:
 - short timeouts
@@ -124,10 +133,9 @@ def test_health(base: str, timeout: float, retries: int) -> None:
 
 
 def test_start(base: str, timeout: float, retries: int) -> None:
-    print_step("POST /api/rf/start")
-    url = f"{base}/api/rf/start"
+    print_step("POST /api/devices/tx/commands/start-rf")
+    url = f"{base}/api/devices/tx/commands/start-rf"
     payload = {
-        "antenna": "main",
         "channel": 0,
         "power": 10,
     }
@@ -147,9 +155,9 @@ def test_start(base: str, timeout: float, retries: int) -> None:
 
 
 def test_stop(base: str, timeout: float, retries: int) -> None:
-    print_step("POST /api/rf/stop")
-    url = f"{base}/api/rf/stop"
-    resp, body = request_with_policy("POST", url, timeout=timeout, retries=retries)
+    print_step("POST /api/devices/tx/commands/stop-rf")
+    url = f"{base}/api/devices/tx/commands/stop-rf"
+    resp, body = request_with_policy("POST", url, timeout=timeout, retries=retries, json_body={})
     expect_status(resp, 200, body)
 
     print("PASS")
