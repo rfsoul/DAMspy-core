@@ -68,6 +68,7 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
         config = meas_azimuth.resolve_sig_gen_sweep_config(
             {
                 "device_type": "hendrix_tx",
+                "tx_mode": "bodyworn",
                 "channels": [0, 20],
                 "power_levels": [10],
                 "antennas": ["main", "secondary"],
@@ -75,10 +76,33 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
         )
 
         self.assertEqual(config["device_type"], "hendrix_tx")
+        self.assertEqual(config["tx_mode"], "bodyworn")
         self.assertEqual(
             config["antennas"],
             [{"value": None, "label": "n/a", "token": "na"}],
         )
+
+    def test_resolve_sig_gen_sweep_config_defaults_hendrix_tx_mode(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "hendrix_tx",
+                "channels": [0],
+                "power_levels": [10],
+            }
+        )
+        self.assertEqual(config["tx_mode"], "always_in_cradle")
+
+    def test_resolve_sig_gen_sweep_config_rejects_tx_mode_for_non_hendrix_tx(self):
+        with self.assertRaisesRegex(ValueError, "tx_mode is only supported"):
+            meas_azimuth.resolve_sig_gen_sweep_config(
+                {
+                    "device_type": "rxcc",
+                    "channels": [0],
+                    "power_levels": [10],
+                    "antennas": ["main"],
+                    "tx_mode": "bodyworn",
+                }
+            )
 
 
 if __name__ == "__main__":
