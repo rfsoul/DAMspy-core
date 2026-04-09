@@ -48,13 +48,13 @@ def import_test_module(py_path: Path):
     return module
 
 
-def sanitize_windows_path(name: str) -> str:
+def sanitize_windows_path(name: str, fallback: str = "unknown") -> str:
     """Remove invalid Windows filename characters and normalise whitespace."""
     safe = "".join(c for c in str(name) if c not in r'<>:"/\\|?*')
     safe = safe.replace(" ", "_")
     safe = re.sub(r"_+", "_", safe)
     safe = safe.strip("._- ")
-    return safe or "unknown"
+    return safe or fallback
 
 
 def ensure_list(value):
@@ -76,7 +76,7 @@ def list_token(prefix: str, values):
 def optional_token(value):
     if value is None:
         return None
-    text = sanitize_windows_path(value)
+    text = sanitize_windows_path(value, fallback="")
     return text if text else None
 
 
