@@ -106,8 +106,11 @@ class RXCC(SignalGeneratorBase):
     def close(self) -> None:
         """
         Best-effort RF stop, then mark the device as closed.
+
+        Hendrix TX stop commands should be explicit at the test-flow layer so
+        bodyworn/manual cradle workflows can prompt the operator first.
         """
-        if self.is_open and self._rf_on:
+        if self.is_open and self._rf_on and self._device_type != "hendrix_tx":
             try:
                 self.rf_off()
             except Exception:

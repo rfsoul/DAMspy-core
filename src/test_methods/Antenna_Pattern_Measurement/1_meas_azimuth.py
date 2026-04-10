@@ -130,11 +130,18 @@ def prompt_manual_change(message: str) -> None:
     input()
 
 
-def prompt_bodyworn_tx_in_cradle() -> None:
+def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
-    print("Place the Hendrix TX in the cradle so channel/power can be updated.")
-    print("Press Enter when the TX is in the cradle...")
+    if return_from_bodyworn_rf:
+        print(
+            "Return the Hendrix TX to the cradle so RF can be stopped and "
+            "channel/power can be updated."
+        )
+        print("Press Enter when the TX is back in the cradle...")
+    else:
+        print("Place the Hendrix TX in the cradle so channel/power can be updated.")
+        print("Press Enter when the TX is in the cradle...")
     print("=" * 90)
     input()
 
@@ -1175,17 +1182,14 @@ def run(params, equip):
                             channel_change_required = (current_channel != channel)
                             power_change_required = (current_power_level != power_level)
 
-                            if (
-                                is_bodyworn_hendrix_tx
-                                and bodyworn_rf_active
-                                and (channel_change_required or power_change_required)
-                            ):
-                                print("[TX] Stopping HENDRIX_TX RF before cradle update")
-                                sg.rf_off()
-                                bodyworn_rf_active = False
-
                             if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
-                                prompt_bodyworn_tx_in_cradle()
+                                prompt_bodyworn_tx_in_cradle(
+                                    return_from_bodyworn_rf=bodyworn_rf_active
+                                )
+                                if bodyworn_rf_active:
+                                    print("[TX] Stopping HENDRIX_TX RF before cradle update")
+                                    sg.rf_off()
+                                    bodyworn_rf_active = False
 
                             if power_change_required:
                                 sg.set_power_level(power_level)
@@ -1288,6 +1292,11 @@ def run(params, equip):
         raise
     finally:
         try:
+            if is_bodyworn_hendrix_tx and bodyworn_rf_active:
+                prompt_bodyworn_tx_in_cradle(return_from_bodyworn_rf=True)
+                print("[TX] Stopping HENDRIX_TX RF before shutdown")
+                sg.rf_off()
+                bodyworn_rf_active = False
             sg.close()
         except Exception as e:
             if use_woym:
