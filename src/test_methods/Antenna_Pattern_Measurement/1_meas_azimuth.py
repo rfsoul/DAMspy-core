@@ -893,7 +893,7 @@ def run(params, equip):
 
     device_type = sg_sweep_cfg["device_type"]
     tx_mode = sg_sweep_cfg["tx_mode"]
-    should_toggle_rf = not (
+    is_bodyworn_hendrix_tx = (
         device_type == "hendrix_tx" and tx_mode == "bodyworn"
     )
     channels = sg_sweep_cfg["channels"]
@@ -983,6 +983,7 @@ def run(params, equip):
         combo_index = 0
         current_channel = None
         current_power_level = None
+        bodyworn_rf_active = False
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
@@ -1174,7 +1175,16 @@ def run(params, equip):
                             channel_change_required = (current_channel != channel)
                             power_change_required = (current_power_level != power_level)
 
-                            if tx_mode == "bodyworn" and (channel_change_required or power_change_required):
+                            if (
+                                is_bodyworn_hendrix_tx
+                                and bodyworn_rf_active
+                                and (channel_change_required or power_change_required)
+                            ):
+                                print("[TX] Stopping HENDRIX_TX RF before cradle update")
+                                sg.rf_off()
+                                bodyworn_rf_active = False
+
+                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
                                 prompt_bodyworn_tx_in_cradle()
 
                             if power_change_required:
@@ -1182,7 +1192,10 @@ def run(params, equip):
                             if channel_change_required:
                                 sg.set_channel(channel)
 
-                            if tx_mode == "bodyworn" and (channel_change_required or power_change_required):
+                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
+                                print(f"[TX] Starting {device_type.upper()} RF")
+                                sg.rf_on()
+                                bodyworn_rf_active = True
                                 prompt_bodyworn_tx_remove_from_cradle()
 
                             current_channel = channel
@@ -1211,14 +1224,20 @@ def run(params, equip):
                                 f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
                             )
 
-                            if should_toggle_rf:
+                            if is_bodyworn_hendrix_tx:
+                                if bodyworn_rf_active:
+                                    print(
+                                        "[TX] Hendrix TX bodyworn mode: "
+                                        "RF already on for this sweep"
+                                    )
+                                else:
+                                    print(
+                                        "[TX] Hendrix TX bodyworn mode: "
+                                        "awaiting cradle update before RF start"
+                                    )
+                            else:
                                 print(f"[TX] Starting {device_type.upper()} RF")
                                 sg.rf_on()
-                            else:
-                                print(
-                                    "[TX] Hendrix TX bodyworn mode: "
-                                    "skipping RF start after cradle removal"
-                                )
                             try:
                                 run_single_azimuth_sweep(
                                     pos=pos,
@@ -1261,7 +1280,7 @@ def run(params, equip):
                                     )
                                 raise
                             finally:
-                                if should_toggle_rf:
+                                if not is_bodyworn_hendrix_tx:
                                     print(f"[TX] Stopping {device_type.upper()} RF")
                                     sg.rf_off()
 
