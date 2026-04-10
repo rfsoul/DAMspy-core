@@ -851,6 +851,10 @@ def run(params, equip):
     rx_cfg = params.get("rx_path", {})
 
     device_type = sg_sweep_cfg["device_type"]
+    tx_mode = str(sg_cfg.get("tx_mode", "")).strip().lower()
+    should_toggle_rf = not (
+        device_type == "hendrix_tx" and tx_mode == "bodyworn"
+    )
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
     antenna_variants = sg_sweep_cfg["antennas"]
@@ -879,6 +883,8 @@ def run(params, equip):
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
+    if tx_mode:
+        print(f"      TX mode            : {tx_mode}")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
     print(f"      Boresight (logical): {bore:.1f}°")
@@ -1146,8 +1152,14 @@ def run(params, equip):
                                 f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
                             )
 
-                            print(f"[TX] Starting {device_type.upper()} RF")
-                            sg.rf_on()
+                            if should_toggle_rf:
+                                print(f"[TX] Starting {device_type.upper()} RF")
+                                sg.rf_on()
+                            else:
+                                print(
+                                    "[TX] Hendrix TX bodyworn mode: "
+                                    "skipping RF start after cradle removal"
+                                )
                             try:
                                 run_single_azimuth_sweep(
                                     pos=pos,
@@ -1190,8 +1202,9 @@ def run(params, equip):
                                     )
                                 raise
                             finally:
-                                print(f"[TX] Stopping {device_type.upper()} RF")
-                                sg.rf_off()
+                                if should_toggle_rf:
+                                    print(f"[TX] Stopping {device_type.upper()} RF")
+                                    sg.rf_off()
 
     except Exception:
         raise

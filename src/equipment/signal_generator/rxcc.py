@@ -107,7 +107,7 @@ class RXCC(SignalGeneratorBase):
         """
         Best-effort RF stop, then mark the device as closed.
         """
-        if self.is_open:
+        if self.is_open and self._rf_on:
             try:
                 self.rf_off()
             except Exception:
@@ -269,6 +269,7 @@ class RXCC(SignalGeneratorBase):
         - retry network/timeouts and HTTP 502
         - do not retry HTTP 422 or HTTP 503
         """
+        device_label = self._request_target_label()
         url = f"{self.base_url}{path}"
         body: Optional[bytes] = None
         headers = {"Accept": "application/json"}
@@ -293,21 +294,23 @@ class RXCC(SignalGeneratorBase):
                 detail = e.read().decode("utf-8", errors="replace").strip()
 
                 if e.code == 422:
-                    raise ValueError(f"RXCC request rejected (422): {detail}") from e
+                    raise ValueError(f"{device_label} request rejected (422): {detail}") from e
 
                 if e.code == 503:
-                    raise RuntimeError(f"RXCC service/device unavailable (503): {detail}") from e
+                    raise RuntimeError(
+                        f"{device_label} service/device unavailable (503): {detail}"
+                    ) from e
 
                 if e.code == 502:
-                    last_exc = RuntimeError(f"RXCC communication failure (502): {detail}")
+                    last_exc = RuntimeError(f"{device_label} communication failure (502): {detail}")
                     if attempt < self.max_retries:
                         continue
                     raise last_exc from e
 
-                raise RuntimeError(f"RXCC unexpected HTTP error {e.code}: {detail}") from e
+                raise RuntimeError(f"{device_label} unexpected HTTP error {e.code}: {detail}") from e
 
             except (error.URLError, socket.timeout, TimeoutError) as e:
-                last_exc = RuntimeError(f"RXCC network/timeout failure: {e}")
+                last_exc = RuntimeError(f"{device_label} network/timeout failure: {e}")
                 if attempt < self.max_retries:
                     continue
                 raise last_exc from e
@@ -315,7 +318,14 @@ class RXCC(SignalGeneratorBase):
         if last_exc is not None:
             raise last_exc
 
-        raise RuntimeError("RXCC request failed for an unknown reason")
+        raise RuntimeError(f"{device_label} request failed for an unknown reason")
+
+    def _request_target_label(self) -> str:
+        if self._device_type == "hendrix_tx":
+            return "Hendrix HID"
+        if self._device_type == "hendrix_rx":
+            return "Hendrix RX"
+        return "RXCC"
 
 
 __all__ = ["RXCC"]
