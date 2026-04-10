@@ -892,14 +892,13 @@ def run(params, equip):
     rx_cfg = params.get("rx_path", {})
 
     device_type = sg_sweep_cfg["device_type"]
-    tx_mode = str(sg_cfg.get("tx_mode", "")).strip().lower()
+    tx_mode = sg_sweep_cfg["tx_mode"]
     should_toggle_rf = not (
         device_type == "hendrix_tx" and tx_mode == "bodyworn"
     )
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
     antenna_variants = sg_sweep_cfg["antennas"]
-    tx_mode = sg_sweep_cfg["tx_mode"]
     antenna_labels = [item["label"] for item in antenna_variants]
 
     span_hz = int(sa_cfg.get("span_hz", 10_000))
@@ -925,11 +924,7 @@ def run(params, equip):
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
-<<<<<<< HEAD
-    if tx_mode:
-=======
     if tx_mode is not None:
->>>>>>> 825c568e270511c4b4f5d9bb826b17ed0a425a2e
         print(f"      TX mode            : {tx_mode}")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
