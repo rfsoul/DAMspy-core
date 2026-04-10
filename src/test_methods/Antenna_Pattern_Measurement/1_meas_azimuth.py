@@ -22,6 +22,8 @@ from time import sleep, time
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
+VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
+DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
 NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
@@ -59,10 +61,28 @@ def normalize_sig_gen_device_type(value) -> str:
     return device_type
 
 
+def normalize_hendrix_tx_mode(value) -> str:
+    if value is None:
+        return DEFAULT_HENDRIX_TX_MODE
+
+    tx_mode = str(value).strip().lower()
+    if tx_mode not in VALID_HENDRIX_TX_MODES:
+        raise ValueError(
+            "sig_gen_1.tx_mode must be one of "
+            f"{sorted(VALID_HENDRIX_TX_MODES)}, got {tx_mode!r}"
+        )
+    return tx_mode
+
+
 def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
     channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
     power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
+    tx_mode_raw = sg_cfg.get("tx_mode")
+    tx_mode = None
+
+    if tx_mode_raw is not None and device_type != "hendrix_tx":
+        raise ValueError("sig_gen_1.tx_mode is only supported for device_type 'hendrix_tx'")
 
     if device_type == "rxcc":
         antenna_values = ensure_list(
@@ -85,12 +105,15 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
                 "token": NON_RXCC_ANTENNA_TOKEN,
             }
         ]
+        if device_type == "hendrix_tx":
+            tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
     return {
         "device_type": device_type,
         "channels": channels,
         "power_levels": power_levels,
         "antennas": antennas,
+        "tx_mode": tx_mode,
     }
 
 
@@ -103,6 +126,24 @@ def prompt_manual_change(message: str) -> None:
     print("[MANUAL ACTION REQUIRED]")
     print(message)
     print("Press Enter when complete...")
+    print("=" * 90)
+    input()
+
+
+def prompt_bodyworn_tx_in_cradle() -> None:
+    print("\n" + "=" * 90)
+    print("[HENDRIX TX BODYWORN MODE]")
+    print("Place the Hendrix TX in the cradle so channel/power can be updated.")
+    print("Press Enter when the TX is in the cradle...")
+    print("=" * 90)
+    input()
+
+
+def prompt_bodyworn_tx_remove_from_cradle() -> None:
+    print("\n" + "=" * 90)
+    print("[HENDRIX TX BODYWORN MODE]")
+    print("HID update successful. You can now remove the Hendrix TX from the cradle.")
+    print("Press Enter after the TX has been removed...")
     print("=" * 90)
     input()
 
@@ -858,6 +899,7 @@ def run(params, equip):
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
     antenna_variants = sg_sweep_cfg["antennas"]
+    tx_mode = sg_sweep_cfg["tx_mode"]
     antenna_labels = [item["label"] for item in antenna_variants]
 
     span_hz = int(sa_cfg.get("span_hz", 10_000))
@@ -883,7 +925,11 @@ def run(params, equip):
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
+<<<<<<< HEAD
     if tx_mode:
+=======
+    if tx_mode is not None:
+>>>>>>> 825c568e270511c4b4f5d9bb826b17ed0a425a2e
         print(f"      TX mode            : {tx_mode}")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
@@ -940,6 +986,8 @@ def run(params, equip):
         )
     try:
         combo_index = 0
+        current_channel = None
+        current_power_level = None
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
@@ -1037,6 +1085,7 @@ def run(params, equip):
                                 "height_m": height_m,
                                 "sig_gen_1": {
                                     "device_type": device_type,
+                                    "tx_mode": tx_mode,
                                     "channel": channel,
                                     "power_level": power_level,
                                     "antenna": antenna,
@@ -1126,8 +1175,23 @@ def run(params, equip):
                             # Configure source
                             if antenna is not None:
                                 sg.set_antenna(antenna)
-                            sg.set_power_level(power_level)
-                            sg.set_channel(channel)
+
+                            channel_change_required = (current_channel != channel)
+                            power_change_required = (current_power_level != power_level)
+
+                            if tx_mode == "bodyworn" and (channel_change_required or power_change_required):
+                                prompt_bodyworn_tx_in_cradle()
+
+                            if power_change_required:
+                                sg.set_power_level(power_level)
+                            if channel_change_required:
+                                sg.set_channel(channel)
+
+                            if tx_mode == "bodyworn" and (channel_change_required or power_change_required):
+                                prompt_bodyworn_tx_remove_from_cradle()
+
+                            current_channel = channel
+                            current_power_level = power_level
 
                             # Configure analyser
                             print("\n[SA] Configuring spectrum analyser (narrowband mode)")

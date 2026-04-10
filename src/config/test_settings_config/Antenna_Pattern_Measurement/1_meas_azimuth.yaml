@@ -1,20 +1,28 @@
-DUT_product: "RXCC"
-DUT_serial_number: "EV4"
-foldername_comment: "first"
-yaml_comment: "etc"
-orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
-orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
-  ori1: "Vert usb up to right hinge at front screen at back"
-  ori2: "Flat pos2_usb to left hinge at front screen at back"
-  ori3: "Vert usb down hinge at front screen at back"
-  ori4: "Flat usb to right hinge at front screen at back"
+DUT_product: "hendrix-tx_V3-04F"
+DUT_serial_number: "002"
+foldername_comment: ""
+yaml_comment: ""
+orientations: [ori1, ori2]  # [ori1, ori2]
+orientation_description: #with usb on left the left tx slot is slot 1
+  ori1: "Vert usb down Tx in slot 1 facing boresight"
+  ori2: "Hor usb left  Tx in slot 1 facing boresight"
+  ori3: "Vert usb up   Tx in slot 1 facing boresight"
+  ori4: "Hor usb right Tx in slot 1 facing boresight"
+
+
+#orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
+#orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
+#  ori1: "Vert usb up to right hinge at front screen at back"
+#  ori2: "Flat pos2_usb to left hinge at front screen at back"
+#  ori3: "Vert usb down hinge at front screen at back"
+#  ori4: "Flat usb to right hinge at front screen at back"
 
 axis: azimuth
 boresight_deg: 0
 max_angle_deg: 170
 step_deg: 1
 max_hold_seconds: 2
-sweep_mode: boresight_return
+sweep_mode: boresight_return     #boresight_return  #boresight_only
 live_plot_every_deg: 20
 use_woym: true
 
@@ -25,10 +33,11 @@ dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
-  device_type: "rxcc"  # "rxcc", "hendrix_tx", or "hendrix_rx"
-  channels: [0, 20]   # [0, 20, 40, 60, 80]
+  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", or "hendrix_rx"
+  tx_mode: "always_in_cradle"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
+  channels: [0, 20, 40, 60, 80]   # [0, 20, 40, 60, 80]
   power_levels: [10]
-  antennas: ["main", "secondary"]
+  #antennas: ["main", "secondary"]
 
 rx_path:
   antenna: "Horn WR340"   # receive antenna into spectrum analyser
