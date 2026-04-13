@@ -22,6 +22,8 @@ from time import sleep, time
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
+VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
+DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
 NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
@@ -59,10 +61,28 @@ def normalize_sig_gen_device_type(value) -> str:
     return device_type
 
 
+def normalize_hendrix_tx_mode(value) -> str:
+    if value is None:
+        return DEFAULT_HENDRIX_TX_MODE
+
+    tx_mode = str(value).strip().lower()
+    if tx_mode not in VALID_HENDRIX_TX_MODES:
+        raise ValueError(
+            "sig_gen_1.tx_mode must be one of "
+            f"{sorted(VALID_HENDRIX_TX_MODES)}, got {tx_mode!r}"
+        )
+    return tx_mode
+
+
 def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
     channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
     power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
+    tx_mode_raw = sg_cfg.get("tx_mode")
+    tx_mode = None
+
+    if tx_mode_raw is not None and device_type != "hendrix_tx":
+        raise ValueError("sig_gen_1.tx_mode is only supported for device_type 'hendrix_tx'")
 
     if device_type == "rxcc":
         antenna_values = ensure_list(
@@ -85,12 +105,15 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
                 "token": NON_RXCC_ANTENNA_TOKEN,
             }
         ]
+        if device_type == "hendrix_tx":
+            tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
     return {
         "device_type": device_type,
         "channels": channels,
         "power_levels": power_levels,
         "antennas": antennas,
+        "tx_mode": tx_mode,
     }
 
 
@@ -103,6 +126,31 @@ def prompt_manual_change(message: str) -> None:
     print("[MANUAL ACTION REQUIRED]")
     print(message)
     print("Press Enter when complete...")
+    print("=" * 90)
+    input()
+
+
+def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
+    print("\n" + "=" * 90)
+    print("[HENDRIX TX BODYWORN MODE]")
+    if return_from_bodyworn_rf:
+        print(
+            "Return the Hendrix TX to the cradle so RF can be stopped and "
+            "channel/power can be updated."
+        )
+        print("Press Enter when the TX is back in the cradle...")
+    else:
+        print("Place the Hendrix TX in the cradle so channel/power can be updated.")
+        print("Press Enter when the TX is in the cradle...")
+    print("=" * 90)
+    input()
+
+
+def prompt_bodyworn_tx_remove_from_cradle() -> None:
+    print("\n" + "=" * 90)
+    print("[HENDRIX TX BODYWORN MODE]")
+    print("HID update successful. You can now remove the Hendrix TX from the cradle.")
+    print("Press Enter after the TX has been removed...")
     print("=" * 90)
     input()
 
@@ -965,6 +1013,10 @@ def run(params, equip):
     rx_cfg = params.get("rx_path", {})
 
     device_type = sg_sweep_cfg["device_type"]
+    tx_mode = sg_sweep_cfg["tx_mode"]
+    is_bodyworn_hendrix_tx = (
+        device_type == "hendrix_tx" and tx_mode == "bodyworn"
+    )
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
     antenna_variants = sg_sweep_cfg["antennas"]
@@ -993,6 +1045,8 @@ def run(params, equip):
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
+    if tx_mode is not None:
+        print(f"      TX mode            : {tx_mode}")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
     print(f"      Boresight (logical): {bore:.1f}°")
@@ -1048,6 +1102,10 @@ def run(params, equip):
         )
     try:
         combo_index = 0
+        current_channel = None
+        current_power_level = None
+        bodyworn_rf_active = False
+        current_battery_mv = None
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
@@ -1145,6 +1203,7 @@ def run(params, equip):
                                 "height_m": height_m,
                                 "sig_gen_1": {
                                     "device_type": device_type,
+                                    "tx_mode": tx_mode,
                                     "channel": channel,
                                     "power_level": power_level,
                                     "antenna": antenna,
@@ -1234,8 +1293,56 @@ def run(params, equip):
                             # Configure source
                             if antenna is not None:
                                 sg.set_antenna(antenna)
-                            sg.set_power_level(power_level)
-                            sg.set_channel(channel)
+
+                            channel_change_required = (current_channel != channel)
+                            power_change_required = (current_power_level != power_level)
+
+                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
+                                prompt_bodyworn_tx_in_cradle(
+                                    return_from_bodyworn_rf=bodyworn_rf_active
+                                )
+                                if bodyworn_rf_active:
+                                    print("[TX] Stopping HENDRIX_TX RF before cradle update")
+                                    sg.rf_off()
+                                    bodyworn_rf_active = False
+
+                            if power_change_required:
+                                sg.set_power_level(power_level)
+                            if channel_change_required:
+                                sg.set_channel(channel)
+
+                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
+                                print(f"[TX] Starting {device_type.upper()} RF")
+                                sg.rf_on()
+                                bodyworn_rf_active = True
+                                current_battery_mv = capture_hendrix_tx_battery_mv(
+                                    sg=sg,
+                                    device_type=device_type,
+                                    combo_meta=combo_meta,
+                                    meta_path=meta_path,
+                                    use_woym=use_woym,
+                                    run_woym_path=run_woym_path,
+                                    latest_woym_path=latest_woym_path,
+                                    current_group=current_group,
+                                    current_test_method=current_test_method,
+                                    sweep_index=combo_index,
+                                    total_sweeps=total_sweeps,
+                                    total_points=sweep_point_count,
+                                    axis=axis,
+                                    orientation=orientation,
+                                    polarisation=pol,
+                                    antenna=antenna_label,
+                                    power_level=power_level,
+                                    channel=channel,
+                                    frequency_hz=tx_freq,
+                                    csv_path=csv_path,
+                                    plot_png_path=plot_png_path,
+                                    combo_dir=combo_dir,
+                                )
+                                prompt_bodyworn_tx_remove_from_cradle()
+
+                            current_channel = channel
+                            current_power_level = power_level
 
                             # Configure analyser
                             print("\n[SA] Configuring spectrum analyser (narrowband mode)")
@@ -1260,32 +1367,48 @@ def run(params, equip):
                                 f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
                             )
 
-                            print(f"[TX] Starting {device_type.upper()} RF")
-                            sg.rf_on()
-                            battery_mv = capture_hendrix_tx_battery_mv(
-                                sg=sg,
-                                device_type=device_type,
-                                combo_meta=combo_meta,
-                                meta_path=meta_path,
-                                use_woym=use_woym,
-                                run_woym_path=run_woym_path,
-                                latest_woym_path=latest_woym_path,
-                                current_group=current_group,
-                                current_test_method=current_test_method,
-                                sweep_index=combo_index,
-                                total_sweeps=total_sweeps,
-                                total_points=sweep_point_count,
-                                axis=axis,
-                                orientation=orientation,
-                                polarisation=pol,
-                                antenna=antenna_label,
-                                power_level=power_level,
-                                channel=channel,
-                                frequency_hz=tx_freq,
-                                csv_path=csv_path,
-                                plot_png_path=plot_png_path,
-                                combo_dir=combo_dir,
-                            )
+                            if is_bodyworn_hendrix_tx:
+                                battery_mv = current_battery_mv
+                                if battery_mv is not None:
+                                    combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
+                                    meta_write(meta_path, combo_meta)
+                                if bodyworn_rf_active:
+                                    print(
+                                        "[TX] Hendrix TX bodyworn mode: "
+                                        "RF already on for this sweep"
+                                    )
+                                else:
+                                    print(
+                                        "[TX] Hendrix TX bodyworn mode: "
+                                        "awaiting cradle update before RF start"
+                                    )
+                            else:
+                                print(f"[TX] Starting {device_type.upper()} RF")
+                                sg.rf_on()
+                                battery_mv = capture_hendrix_tx_battery_mv(
+                                    sg=sg,
+                                    device_type=device_type,
+                                    combo_meta=combo_meta,
+                                    meta_path=meta_path,
+                                    use_woym=use_woym,
+                                    run_woym_path=run_woym_path,
+                                    latest_woym_path=latest_woym_path,
+                                    current_group=current_group,
+                                    current_test_method=current_test_method,
+                                    sweep_index=combo_index,
+                                    total_sweeps=total_sweeps,
+                                    total_points=sweep_point_count,
+                                    axis=axis,
+                                    orientation=orientation,
+                                    polarisation=pol,
+                                    antenna=antenna_label,
+                                    power_level=power_level,
+                                    channel=channel,
+                                    frequency_hz=tx_freq,
+                                    csv_path=csv_path,
+                                    plot_png_path=plot_png_path,
+                                    combo_dir=combo_dir,
+                                )
                             try:
                                 run_single_azimuth_sweep(
                                     pos=pos,
@@ -1329,13 +1452,19 @@ def run(params, equip):
                                     )
                                 raise
                             finally:
-                                print(f"[TX] Stopping {device_type.upper()} RF")
-                                sg.rf_off()
+                                if not is_bodyworn_hendrix_tx:
+                                    print(f"[TX] Stopping {device_type.upper()} RF")
+                                    sg.rf_off()
 
     except Exception:
         raise
     finally:
         try:
+            if is_bodyworn_hendrix_tx and bodyworn_rf_active:
+                prompt_bodyworn_tx_in_cradle(return_from_bodyworn_rf=True)
+                print("[TX] Stopping HENDRIX_TX RF before shutdown")
+                sg.rf_off()
+                bodyworn_rf_active = False
             sg.close()
         except Exception as e:
             if use_woym:
