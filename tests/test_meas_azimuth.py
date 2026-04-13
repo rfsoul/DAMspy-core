@@ -239,15 +239,19 @@ class _FakeSignalGenerator:
 
     def set_power_level(self, power_level):
         self.power_levels.append(power_level)
+        self.event_log.append(f"power:{power_level}")
 
     def set_channel(self, channel):
         self.channels.append(channel)
+        self.event_log.append(f"channel:{channel}")
 
     def rf_on(self):
         self.rf_on_calls += 1
+        self.event_log.append("rf_on")
 
     def rf_off(self):
         self.rf_off_calls += 1
+        self.event_log.append("rf_off")
 
     def read_battery_info(self):
         self.read_battery_info_calls += 1
@@ -362,6 +366,7 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(prompt_out.call_count, 1)
         self.assertEqual(sweep_battery_values, [3810, 3810])
         self.assertEqual(len(equip.spectrum_analyser.calls), 2)
+        self.assertLess(events.index("battery"), events.index("channel:7"))
         self.assertLess(events.index("battery"), events.index("out"))
 
     def test_run_preserves_rf_toggle_for_hendrix_tx_non_bodyworn(self):

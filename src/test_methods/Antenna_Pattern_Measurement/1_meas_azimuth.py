@@ -1305,16 +1305,6 @@ def run(params, equip):
                                     print("[TX] Stopping HENDRIX_TX RF before cradle update")
                                     sg.rf_off()
                                     bodyworn_rf_active = False
-
-                            if power_change_required:
-                                sg.set_power_level(power_level)
-                            if channel_change_required:
-                                sg.set_channel(channel)
-
-                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
-                                print(f"[TX] Starting {device_type.upper()} RF")
-                                sg.rf_on()
-                                bodyworn_rf_active = True
                                 current_battery_mv = capture_hendrix_tx_battery_mv(
                                     sg=sg,
                                     device_type=device_type,
@@ -1339,6 +1329,16 @@ def run(params, equip):
                                     plot_png_path=plot_png_path,
                                     combo_dir=combo_dir,
                                 )
+
+                            if power_change_required:
+                                sg.set_power_level(power_level)
+                            if channel_change_required:
+                                sg.set_channel(channel)
+
+                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
+                                print(f"[TX] Starting {device_type.upper()} RF")
+                                sg.rf_on()
+                                bodyworn_rf_active = True
                                 prompt_bodyworn_tx_remove_from_cradle()
 
                             current_channel = channel
