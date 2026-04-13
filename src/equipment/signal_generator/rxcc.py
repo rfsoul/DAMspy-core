@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import socket
 from typing import Any, Dict, Optional
@@ -52,10 +51,6 @@ class RXCC(SignalGeneratorBase):
     DEFAULT_DEVICE_TYPE = "rxcc"
     VALID_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
     VALID_ANTENNAS = {"main", "secondary"}
-    HENDRIX_TX_BATTERY_VID = 0x19F7
-    HENDRIX_TX_BATTERY_PID = 0x008A
-    HENDRIX_TX_BATTERY_REQUEST = bytes([0x01, 0x61] + [0x00] * 15)
-    HENDRIX_TX_BATTERY_RESPONSE_LEN = 17
     COMMAND_PATHS = {
         "rxcc": {
             "start": "/api/devices/rxcc/commands/start-rf",
@@ -220,43 +215,31 @@ class RXCC(SignalGeneratorBase):
 
     def read_battery_info(self) -> Dict[str, int]:
         """
-        Read Hendrix TX battery telemetry over HID while the radio is in the cradle.
+        Read Hendrix TX battery telemetry from damspy-rpicontrol.
         """
         self.ensure_open()
         if self._device_type != "hendrix_tx":
             raise RuntimeError("Battery info is only supported for hendrix_tx")
 
+        data = self._request_json("POST", "/api/battery/tx", payload={})
+
+        if data.get("status") != "ok":
+            raise RuntimeError(f"Unexpected Hendrix TX battery status: {data!r}")
+
+        battery_mv = data.get("battery_mv")
+        if battery_mv is None:
+            raise RuntimeError(f"Hendrix TX battery response missing battery_mv: {data!r}")
+
         try:
-            hid = importlib.import_module("hid")
-        except ModuleNotFoundError as e:
-            raise RuntimeError("Python HID support is not installed") from e
+            battery_mv = int(battery_mv)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"Invalid Hendrix TX battery_mv value in response: {data!r}"
+            ) from e
 
-        hid_factory = getattr(hid, "device", None)
-        if hid_factory is None:
-            hid_factory = getattr(hid, "Device", None)
-        if hid_factory is None:
-            raise RuntimeError("Python HID module does not expose a device constructor")
-
-        hid_device = hid_factory()
-        try:
-            hid_device.open(self.HENDRIX_TX_BATTERY_VID, self.HENDRIX_TX_BATTERY_PID)
-            hid_device.write(self.HENDRIX_TX_BATTERY_REQUEST)
-            data = hid_device.read(
-                self.HENDRIX_TX_BATTERY_RESPONSE_LEN,
-                int(self.timeout * 1000),
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to read Hendrix TX battery info over HID: {e}") from e
-        finally:
-            try:
-                hid_device.close()
-            except Exception:
-                pass
-
-        if not data:
-            raise RuntimeError("No HID response received from Hendrix TX battery request")
-
-        return self._parse_hendrix_tx_battery_response(data)
+        return {
+            "battery_mv": battery_mv,
+        }
 
     @property
     def channel(self) -> Optional[int]:
@@ -303,44 +286,6 @@ class RXCC(SignalGeneratorBase):
             )
         if self._device_type == "rxcc" and self._antenna is None:
             raise RuntimeError("RXCC rf_on() requires antenna to be set before starting RF")
-
-    def _parse_hendrix_tx_battery_response(self, data) -> Dict[str, int]:
-        raw = list(data)
-        if len(raw) < 4:
-            raise RuntimeError(
-                f"Hendrix TX battery response too short: expected at least 4 bytes, got {len(raw)}"
-            )
-
-        payload = raw
-        if raw[0] == 0x02:
-            if len(raw) < 5:
-                raise RuntimeError(
-                    f"Hendrix TX battery response too short: expected at least 5 bytes, got {len(raw)}"
-                )
-            if raw[1] != 0x61:
-                raise RuntimeError(
-                    f"Unexpected Hendrix TX battery command ID: 0x{raw[1]:02X}"
-                )
-            if raw[2] != ord("A"):
-                raise RuntimeError(
-                    f"Unexpected Hendrix TX battery status: 0x{raw[2]:02X}"
-                )
-        else:
-            if raw[0] != 0x61:
-                raise RuntimeError(
-                    "Unexpected Hendrix TX battery response header: "
-                    f"0x{raw[0]:02X}"
-                )
-            if raw[1] != ord("A"):
-                raise RuntimeError(
-                    f"Unexpected Hendrix TX battery status: 0x{raw[1]:02X}"
-                )
-            payload = [0x02] + raw
-
-        battery_mv = payload[3] | (payload[4] << 8)
-        return {
-            "battery_mv": battery_mv,
-        }
 
     def _request_json(
         self,

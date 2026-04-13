@@ -2,7 +2,6 @@ import io
 import json
 import os
 import sys
-import types
 import unittest
 from urllib import error
 from unittest.mock import patch
@@ -192,50 +191,41 @@ class RXCCTests(unittest.TestCase):
         )
         self.assertEqual(captured["payload"], {})
 
-    def test_hendrix_tx_battery_info_reads_expected_hid_report(self):
+    def test_hendrix_tx_battery_info_calls_http_endpoint(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_tx")
         captured = {}
 
-        class FakeHidDevice:
-            def open(self, vid, pid):
-                captured["vid"] = vid
-                captured["pid"] = pid
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            captured["timeout"] = timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse(
+                '{"operation":"read_battery","status":"ok","device":"tx","battery_mv":3812,"reports_sent":1}'
+            )
 
-            def write(self, payload):
-                captured["payload"] = bytes(payload)
-
-            def read(self, length, timeout_ms):
-                captured["length"] = length
-                captured["timeout_ms"] = timeout_ms
-                return [0x02, 0x61, ord("A"), 0xF0, 0x0E]
-
-            def close(self):
-                captured["closed"] = True
-
-        fake_hid = types.SimpleNamespace(device=lambda: FakeHidDevice())
-
-        with patch(
-            "equipment.signal_generator.rxcc.importlib.import_module",
-            return_value=fake_hid,
-        ):
+        with patch("equipment.signal_generator.rxcc.request.urlopen", side_effect=fake_urlopen):
             battery_info = driver.read_battery_info()
 
-        self.assertEqual(battery_info, {"battery_mv": 3824})
-        self.assertEqual(captured["vid"], RXCC.HENDRIX_TX_BATTERY_VID)
-        self.assertEqual(captured["pid"], RXCC.HENDRIX_TX_BATTERY_PID)
-        self.assertEqual(captured["payload"], RXCC.HENDRIX_TX_BATTERY_REQUEST)
-        self.assertEqual(captured["length"], RXCC.HENDRIX_TX_BATTERY_RESPONSE_LEN)
-        self.assertEqual(captured["timeout_ms"], int(driver.timeout * 1000))
-        self.assertTrue(captured["closed"])
+        self.assertEqual(battery_info, {"battery_mv": 3812})
+        self.assertEqual(captured["url"], "http://example.test:8000/api/battery/tx")
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["timeout"], driver.timeout)
+        self.assertEqual(captured["payload"], {})
 
-    def test_hendrix_tx_battery_parser_accepts_report_without_report_id(self):
+    def test_hendrix_tx_battery_info_rejects_missing_battery_mv(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_tx")
 
-        parsed = driver._parse_hendrix_tx_battery_response([0x61, ord("A"), 0xD4, 0x0C])
-
-        self.assertEqual(parsed, {"battery_mv": 3284})
+        with patch(
+            "equipment.signal_generator.rxcc.request.urlopen",
+            side_effect=lambda req, timeout: _FakeResponse(
+                '{"operation":"read_battery","status":"ok","device":"tx","reports_sent":1}'
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "missing battery_mv"):
+                driver.read_battery_info()
 
     def test_missing_channel_fails_for_all_device_types(self):
         for device_type in ("rxcc", "hendrix_tx", "hendrix_rx"):
