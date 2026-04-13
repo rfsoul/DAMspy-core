@@ -269,8 +269,9 @@ def build_current_sweep_dict(
     power_level,
     channel,
     frequency_hz,
+    battery_mv=None,
 ):
-    return {
+    sweep = {
         "sweep_index": sweep_index,
         "total_sweeps": total_sweeps,
         "point_index": point_index,
@@ -283,6 +284,109 @@ def build_current_sweep_dict(
         "channel": channel,
         "frequency_hz": frequency_hz,
     }
+    if battery_mv is not None:
+        sweep["battery_mv"] = battery_mv
+    return sweep
+
+
+def capture_hendrix_tx_battery_mv(
+    *,
+    sg,
+    device_type: str,
+    combo_meta: dict,
+    meta_path: str,
+    use_woym: bool,
+    run_woym_path: str,
+    latest_woym_path: str,
+    current_group: str,
+    current_test_method: str,
+    sweep_index: int,
+    total_sweeps: int,
+    total_points: int,
+    axis: str,
+    orientation,
+    polarisation,
+    antenna,
+    power_level,
+    channel,
+    frequency_hz,
+    csv_path: str,
+    plot_png_path: str,
+    combo_dir: str,
+):
+    if device_type != "hendrix_tx":
+        return None
+
+    try:
+        battery_info = sg.read_battery_info()
+        battery_mv = battery_info.get("battery_mv")
+        if battery_mv is None:
+            raise RuntimeError("battery_mv missing from Hendrix TX battery response")
+
+        combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
+        meta_write(meta_path, combo_meta)
+        print(f"[META] Updated Hendrix TX battery_mv -> {battery_mv} mV")
+
+        if use_woym:
+            update_woym_generic(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                current_test_group=current_group,
+                current_test_method=current_test_method,
+                current_sweep=build_current_sweep_dict(
+                    sweep_index=sweep_index,
+                    total_sweeps=total_sweeps,
+                    point_index=0,
+                    total_points=total_points,
+                    axis=axis,
+                    orientation=orientation,
+                    polarisation=polarisation,
+                    antenna=antenna,
+                    power_level=power_level,
+                    channel=channel,
+                    frequency_hz=frequency_hz,
+                    battery_mv=battery_mv,
+                ),
+                artifacts={
+                    "latest_csv_path": csv_path,
+                    "latest_plot_path": plot_png_path,
+                    "latest_metadata_path": meta_path,
+                    "combo_dir": combo_dir,
+                },
+                event=f"Captured Hendrix TX battery voltage: {battery_mv} mV",
+            )
+
+        return battery_mv
+    except Exception as e:
+        print(f"[WARN] Hendrix TX battery read failed: {e}")
+        if use_woym:
+            update_woym_generic(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                current_test_group=current_group,
+                current_test_method=current_test_method,
+                current_sweep=build_current_sweep_dict(
+                    sweep_index=sweep_index,
+                    total_sweeps=total_sweeps,
+                    point_index=0,
+                    total_points=total_points,
+                    axis=axis,
+                    orientation=orientation,
+                    polarisation=polarisation,
+                    antenna=antenna,
+                    power_level=power_level,
+                    channel=channel,
+                    frequency_hz=frequency_hz,
+                ),
+                artifacts={
+                    "latest_csv_path": csv_path,
+                    "latest_plot_path": plot_png_path,
+                    "latest_metadata_path": meta_path,
+                    "combo_dir": combo_dir,
+                },
+                event=f"Hendrix TX battery read failed: {e}",
+            )
+        return None
 
 
 def build_spectrum_analyser_block(
@@ -456,6 +560,7 @@ def run_single_azimuth_sweep(
     span_hz: float,
     rbw_hz: float,
     vbw_hz: float,
+    battery_mv=None,
 ):
     current_az = 0.0
     last_plot_az = None
@@ -505,6 +610,7 @@ def run_single_azimuth_sweep(
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
+                    battery_mv=battery_mv,
                 ),
                 artifacts={
                     "latest_csv_path": csv_path,
@@ -562,6 +668,7 @@ def run_single_azimuth_sweep(
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
+                    battery_mv=battery_mv,
                 ),
                 artifacts={
                     "latest_csv_path": csv_path,
@@ -632,6 +739,7 @@ def run_single_azimuth_sweep(
                         power_level=power_level,
                         channel=channel,
                         frequency_hz=tx_freq,
+                        battery_mv=battery_mv,
                     ),
                     artifacts={
                         "latest_csv_path": csv_path,
@@ -670,21 +778,25 @@ def run_single_azimuth_sweep(
             )
 
             if use_woym:
+                last_measurement = {
+                    "orientation": orientation,
+                    "polarisation": polarisation,
+                    "antenna": antenna,
+                    "power_level": power_level,
+                    "channel": channel,
+                    "frequency_hz": tx_freq,
+                    "azimuth_deg": az,
+                    "rx_peak_dbm": rx_dbm,
+                    "peak_freq_hz": pk_f_hz,
+                    "timestamp": iso_now(),
+                }
+                if battery_mv is not None:
+                    last_measurement["battery_mv"] = battery_mv
+
                 update_woym_generic(
                     run_woym_path=run_woym_path,
                     latest_woym_path=latest_woym_path,
-                    last_measurement={
-                        "orientation": orientation,
-                        "polarisation": polarisation,
-                        "antenna": antenna,
-                        "power_level": power_level,
-                        "channel": channel,
-                        "frequency_hz": tx_freq,
-                        "azimuth_deg": az,
-                        "rx_peak_dbm": rx_dbm,
-                        "peak_freq_hz": pk_f_hz,
-                        "timestamp": iso_now(),
-                    },
+                    last_measurement=last_measurement,
                     current_sweep=build_current_sweep_dict(
                         sweep_index=sweep_index,
                         total_sweeps=total_sweeps,
@@ -697,6 +809,7 @@ def run_single_azimuth_sweep(
                         power_level=power_level,
                         channel=channel,
                         frequency_hz=tx_freq,
+                        battery_mv=battery_mv,
                     ),
                     artifacts={
                         "latest_csv_path": csv_path,
@@ -788,6 +901,7 @@ def run_single_azimuth_sweep(
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
+                    battery_mv=battery_mv,
                 ),
                 artifacts={
                     "latest_csv_path": csv_path,
@@ -1148,6 +1262,30 @@ def run(params, equip):
 
                             print(f"[TX] Starting {device_type.upper()} RF")
                             sg.rf_on()
+                            battery_mv = capture_hendrix_tx_battery_mv(
+                                sg=sg,
+                                device_type=device_type,
+                                combo_meta=combo_meta,
+                                meta_path=meta_path,
+                                use_woym=use_woym,
+                                run_woym_path=run_woym_path,
+                                latest_woym_path=latest_woym_path,
+                                current_group=current_group,
+                                current_test_method=current_test_method,
+                                sweep_index=combo_index,
+                                total_sweeps=total_sweeps,
+                                total_points=sweep_point_count,
+                                axis=axis,
+                                orientation=orientation,
+                                polarisation=pol,
+                                antenna=antenna_label,
+                                power_level=power_level,
+                                channel=channel,
+                                frequency_hz=tx_freq,
+                                csv_path=csv_path,
+                                plot_png_path=plot_png_path,
+                                combo_dir=combo_dir,
+                            )
                             try:
                                 run_single_azimuth_sweep(
                                     pos=pos,
@@ -1179,6 +1317,7 @@ def run(params, equip):
                                     span_hz=span_hz,
                                     rbw_hz=rbw_hz,
                                     vbw_hz=vbw_hz,
+                                    battery_mv=battery_mv,
                                 )
                             except Exception as e:
                                 if use_woym:

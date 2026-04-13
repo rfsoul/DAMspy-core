@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import types
 import unittest
 from urllib import error
 from unittest.mock import patch
@@ -190,6 +191,51 @@ class RXCCTests(unittest.TestCase):
             "http://example.test:8000/api/devices/rx/commands/stop-rf",
         )
         self.assertEqual(captured["payload"], {})
+
+    def test_hendrix_tx_battery_info_reads_expected_hid_report(self):
+        driver = self.make_driver()
+        driver.set_device_type("hendrix_tx")
+        captured = {}
+
+        class FakeHidDevice:
+            def open(self, vid, pid):
+                captured["vid"] = vid
+                captured["pid"] = pid
+
+            def write(self, payload):
+                captured["payload"] = bytes(payload)
+
+            def read(self, length, timeout_ms):
+                captured["length"] = length
+                captured["timeout_ms"] = timeout_ms
+                return [0x02, 0x61, ord("A"), 0xF0, 0x0E]
+
+            def close(self):
+                captured["closed"] = True
+
+        fake_hid = types.SimpleNamespace(device=lambda: FakeHidDevice())
+
+        with patch(
+            "equipment.signal_generator.rxcc.importlib.import_module",
+            return_value=fake_hid,
+        ):
+            battery_info = driver.read_battery_info()
+
+        self.assertEqual(battery_info, {"battery_mv": 3824})
+        self.assertEqual(captured["vid"], RXCC.HENDRIX_TX_BATTERY_VID)
+        self.assertEqual(captured["pid"], RXCC.HENDRIX_TX_BATTERY_PID)
+        self.assertEqual(captured["payload"], RXCC.HENDRIX_TX_BATTERY_REQUEST)
+        self.assertEqual(captured["length"], RXCC.HENDRIX_TX_BATTERY_RESPONSE_LEN)
+        self.assertEqual(captured["timeout_ms"], int(driver.timeout * 1000))
+        self.assertTrue(captured["closed"])
+
+    def test_hendrix_tx_battery_parser_accepts_report_without_report_id(self):
+        driver = self.make_driver()
+        driver.set_device_type("hendrix_tx")
+
+        parsed = driver._parse_hendrix_tx_battery_response([0x61, ord("A"), 0xD4, 0x0C])
+
+        self.assertEqual(parsed, {"battery_mv": 3284})
 
     def test_missing_channel_fails_for_all_device_types(self):
         for device_type in ("rxcc", "hendrix_tx", "hendrix_rx"):
