@@ -1,8 +1,8 @@
 DUT_product: "hendrix-tx_V3-04F"
 DUT_serial_number: "002"
-foldername_comment: "bodyworn"
+foldername_comment: "bodyworn_ori2"
 yaml_comment: ""
-orientations: [ori1, ori2]  # [ori1, ori2]
+orientations: [ori2]  # [ori1, ori2]
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
   ori2: "Hor usb left  Tx in slot 1 facing boresight"
@@ -37,6 +37,7 @@ sig_gen_1:  # rode rxcc device
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
   power_levels: [10]
+  ctx: 1
   #antennas: ["main", "secondary"]
 
 rx_path:
