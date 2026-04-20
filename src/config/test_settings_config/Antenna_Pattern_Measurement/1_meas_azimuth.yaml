@@ -1,8 +1,10 @@
-DUT_product: "hendrix-tx_V3-04F"
+DUT_product: "Hendrix-Tx"
+DUT_hardware_config: "V3-04F"
 DUT_serial_number: "002"
-foldername_comment: "bodyworn_ori2"
+foldername_comment: "bodyworn"
 yaml_comment: ""
 orientations: [ori2]  # [ori1, ori2]
+orientation_photo_location: "C:\Git\DAMspy-core\src\DAMspy_logs\orientations\hendrix_tx"
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
   ori2: "Hor usb left  Tx in slot 1 facing boresight"
@@ -11,7 +13,7 @@ orientation_description: #with usb on left the left tx slot is slot 1
 
 
 #orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
-#orientation_description:  #see DAMspy-core\src\DAMspy_logs\rxcc orientations
+#orientation_description:  #see DAMspy-core\src\DAMspy_logs\orientations\rxcc
 #  ori1: "Vert usb up to right hinge at front screen at back"
 #  ori2: "Flat pos2_usb to left hinge at front screen at back"
 #  ori3: "Vert usb down hinge at front screen at back"
@@ -28,23 +30,25 @@ use_woym: true
 
 
 height_m: 1.5
-polarisation: [H, V]
+polarisation: [V] #[H, V]
 dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
   device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", or "hendrix_rx"
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
-  ctx: 1  # Hendrix TX/RX only: 1=high, 0=low. Defaults to 1 when omitted.
+  tx_cable_loss: 0 # CW generated inside the product 
+  tx_power: 18 #in dBm
   channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
   power_levels: [10]
-  ctx: 1
+  CTX: [1,0]
   #antennas: ["main", "secondary"]
 
 rx_path:
   antenna: "Horn WR340"   # receive antenna into spectrum analyser
   antenna_comment: "www.ainfoinc.com  2.2-3.3 GHz WR340 11dB  P/N NB-340-10-C-NF"
-  rx_cable_loss_2.45Ghz: 4.6 #dB at 2.45GHz
+  rx_antenna_gain: 11 #di
+  rx_cable_loss: 4.6 #dB at 2.45GHz
   rx_dist_m: 3.02 # Distance in metres from centre of DAMS to Rx antenna
 
 spec_an_1:  # signal hound BBD60
