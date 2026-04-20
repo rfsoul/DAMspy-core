@@ -96,6 +96,31 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
         )
 
         self.assertEqual(config["tx_mode"], "always_in_cradle")
+        self.assertEqual(config["ctx_level"], "high")
+
+    def test_resolve_sig_gen_sweep_config_accepts_ctx_zero_for_hendrix_rx(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "hendrix_rx",
+                "ctx": 0,
+                "channels": [0],
+                "power_levels": [10],
+            }
+        )
+
+        self.assertEqual(config["ctx_level"], "low")
+
+    def test_resolve_sig_gen_sweep_config_rejects_ctx_for_rxcc(self):
+        with self.assertRaisesRegex(ValueError, "ctx is only supported"):
+            meas_azimuth.resolve_sig_gen_sweep_config(
+                {
+                    "device_type": "rxcc",
+                    "ctx": 1,
+                    "channels": [0],
+                    "power_levels": [10],
+                    "antennas": ["main"],
+                }
+            )
 
     def test_resolve_sig_gen_sweep_config_rejects_tx_mode_for_non_hendrix_tx(self):
         with self.assertRaisesRegex(ValueError, "tx_mode is only supported"):
@@ -216,6 +241,7 @@ class _FakeSignalGenerator:
         self.open_calls = 0
         self.close_calls = 0
         self.device_types = []
+        self.ctx_levels = []
         self.antennas = []
         self.power_levels = []
         self.channels = []
@@ -233,6 +259,10 @@ class _FakeSignalGenerator:
 
     def set_device_type(self, device_type):
         self.device_types.append(device_type)
+
+    def set_ctx(self, ctx_level):
+        self.ctx_levels.append(ctx_level)
+        self.event_log.append(f"ctx:{ctx_level}")
 
     def set_antenna(self, antenna):
         self.antennas.append(antenna)
@@ -357,6 +387,7 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.open_calls, 1)
         self.assertEqual(equip.signal_generator.close_calls, 1)
         self.assertEqual(equip.signal_generator.device_types, ["hendrix_tx"])
+        self.assertEqual(equip.signal_generator.ctx_levels, ["high"])
         self.assertEqual(equip.signal_generator.power_levels, [3])
         self.assertEqual(equip.signal_generator.channels, [7])
         self.assertEqual(equip.signal_generator.rf_on_calls, 1)
@@ -397,9 +428,35 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.rf_on_calls, 1)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
         self.assertEqual(equip.signal_generator.read_battery_info_calls, 1)
+        self.assertEqual(equip.signal_generator.ctx_levels, ["high"])
         self.assertEqual(prompt_in.call_count, 0)
         self.assertEqual(prompt_out.call_count, 0)
         self.assertEqual(sweep_battery_values, [3810])
+
+    def test_run_passes_ctx_low_from_yaml_to_signal_generator(self):
+        equip = _FakeEquipment()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_rx",
+                    "ctx": 0,
+                    "channels": [7],
+                    "power_levels": [3],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: None,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.device_types, ["hendrix_rx"])
+        self.assertEqual(equip.signal_generator.ctx_levels, ["low"])
 
 
 if __name__ == "__main__":

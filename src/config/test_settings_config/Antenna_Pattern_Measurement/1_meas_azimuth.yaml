@@ -35,6 +35,7 @@ lowest_level: -80
 sig_gen_1:  # rode rxcc device
   device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", or "hendrix_rx"
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
+  ctx: 1  # Hendrix TX/RX only: 1=high, 0=low. Defaults to 1 when omitted.
   channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
   power_levels: [10]
   ctx: 1

@@ -65,6 +65,28 @@ class RXCCTests(unittest.TestCase):
 
         return captured
 
+    def _capture_requests(self, driver):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            payload = None
+            if req.data is not None:
+                payload = json.loads(req.data.decode("utf-8"))
+            captured.append(
+                {
+                    "url": req.full_url,
+                    "method": req.get_method(),
+                    "timeout": timeout,
+                    "payload": payload,
+                }
+            )
+            return _FakeResponse('{"status":"ok"}')
+
+        with patch("equipment.signal_generator.rxcc.request.urlopen", side_effect=fake_urlopen):
+            driver.rf_on()
+
+        return captured
+
     def test_device_type_defaults_to_rxcc(self):
         driver = self.make_driver()
         self.assertEqual(driver.device_type, "rxcc")
@@ -78,6 +100,11 @@ class RXCCTests(unittest.TestCase):
         driver = self.make_driver()
         with self.assertRaisesRegex(ValueError, "device_type"):
             driver.set_device_type("unknown")
+
+    def test_invalid_ctx_value_is_rejected(self):
+        driver = self.make_driver()
+        with self.assertRaisesRegex(ValueError, "CTX"):
+            driver.set_ctx(2)
 
     def test_rxcc_start_uses_unified_per_device_path_and_payload(self):
         driver = self.make_driver()
@@ -100,33 +127,74 @@ class RXCCTests(unittest.TestCase):
         )
         self.assertTrue(driver.rf_enabled)
 
-    def test_hendrix_tx_start_uses_unified_per_device_path_and_payload(self):
+    def test_hendrix_tx_start_posts_ctx_high_before_rf_start_by_default(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_tx")
         driver.set_channel(17)
         driver.set_power_level(6)
 
-        captured = self._capture_request(driver)
+        captured = self._capture_requests(driver)
 
         self.assertEqual(
-            captured["url"],
+            captured,
+            [
+                {
+                    "url": "http://example.test:8000/api/ctx/tx/high",
+                    "method": "POST",
+                    "timeout": driver.timeout,
+                    "payload": None,
+                },
+                {
+                    "url": "http://example.test:8000/api/devices/tx/commands/start-rf",
+                    "method": "POST",
+                    "timeout": driver.timeout,
+                    "payload": {"channel": 17, "power": 6},
+                },
+            ],
+        )
+
+    def test_hendrix_tx_start_can_post_ctx_low_before_rf_start(self):
+        driver = self.make_driver()
+        driver.set_device_type("hendrix_tx")
+        driver.set_ctx(0)
+        driver.set_channel(17)
+        driver.set_power_level(6)
+
+        captured = self._capture_requests(driver)
+
+        self.assertEqual(captured[0]["url"], "http://example.test:8000/api/ctx/tx/low")
+        self.assertEqual(captured[0]["payload"], None)
+        self.assertEqual(
+            captured[1]["url"],
             "http://example.test:8000/api/devices/tx/commands/start-rf",
         )
-        self.assertEqual(captured["payload"], {"channel": 17, "power": 6})
+        self.assertEqual(captured[1]["payload"], {"channel": 17, "power": 6})
 
-    def test_hendrix_rx_start_uses_unified_per_device_path_and_payload(self):
+    def test_hendrix_rx_start_posts_ctx_high_before_rf_start_by_default(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_rx")
         driver.set_channel(17)
         driver.set_power_level(6)
 
-        captured = self._capture_request(driver)
+        captured = self._capture_requests(driver)
 
         self.assertEqual(
-            captured["url"],
-            "http://example.test:8000/api/devices/rx/commands/start-rf",
+            captured,
+            [
+                {
+                    "url": "http://example.test:8000/api/ctx/rx/high",
+                    "method": "POST",
+                    "timeout": driver.timeout,
+                    "payload": None,
+                },
+                {
+                    "url": "http://example.test:8000/api/devices/rx/commands/start-rf",
+                    "method": "POST",
+                    "timeout": driver.timeout,
+                    "payload": {"channel": 17, "power": 6},
+                },
+            ],
         )
-        self.assertEqual(captured["payload"], {"channel": 17, "power": 6})
 
     def test_rxcc_stop_uses_unified_per_device_path(self):
         driver = self.make_driver()
