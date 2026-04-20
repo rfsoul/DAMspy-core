@@ -3,8 +3,8 @@ DUT_hardware_config: "V3-04F"
 DUT_serial_number: "002"
 foldername_comment: "bodyworn_corrected_CTX"
 yaml_comment: ""
-orientations: [ori2]  # [ori1, ori2]
-orientation_photo_location: "C:\Git\DAMspy-core\src\DAMspy_logs\orientations\hendrix_tx"
+orientations: [ori1]  # [ori1, ori2]
+orientation_photo_location: "C:/Git/DAMspy-core/src/DAMspy_logs/orientations/hendrix_tx"
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
   ori2: "Hor usb left  Tx in slot 1 facing boresight"
