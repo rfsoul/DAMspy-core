@@ -484,7 +484,7 @@ class MeasAzimuthRunTests(unittest.TestCase):
                 {
                     "device_type": "hendrix_rx",
                     "CTX": [1, 0],
-                    "channels": [7],
+                    "channels": [7, 8],
                     "power_levels": [3],
                 },
             )
@@ -498,8 +498,12 @@ class MeasAzimuthRunTests(unittest.TestCase):
                 meas_azimuth.run(params, equip)
 
         self.assertEqual(equip.signal_generator.device_types, ["hendrix_rx"])
-        self.assertEqual(equip.signal_generator.ctx_levels, ["high", "low"])
-        self.assertEqual(len(sweep_calls), 2)
+        self.assertEqual(equip.signal_generator.ctx_levels, ["high", "low", "high", "low"])
+        self.assertEqual(equip.signal_generator.channels, [7, 8])
+        self.assertEqual(
+            [(call["channel"], call["ctx"]) for call in sweep_calls],
+            [(7, 1), (7, 0), (8, 1), (8, 0)],
+        )
 
 
 if __name__ == "__main__":

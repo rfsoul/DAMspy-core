@@ -1242,15 +1242,15 @@ def run(params, equip):
                     antenna_label = antenna_cfg["label"]
                     antenna_token = antenna_cfg["token"]
                     for power_level in power_levels:
-                        for ctx_level in ctx_levels:
-                            ctx_value = ctx_level_to_numeric(ctx_level)
-                            ctx_display = (
-                                f"{ctx_value} ({ctx_level})" if ctx_value is not None else "n/a"
-                            )
-                            token_ctx = sanitize_token(ctx_value) if ctx_value is not None else None
-                            for channel in channels:
+                        for channel in channels:
+                            tx_freq = rxcc_channel_to_frequency_hz(channel)
+                            for ctx_level in ctx_levels:
+                                ctx_value = ctx_level_to_numeric(ctx_level)
+                                ctx_display = (
+                                    f"{ctx_value} ({ctx_level})" if ctx_value is not None else "n/a"
+                                )
+                                token_ctx = sanitize_token(ctx_value) if ctx_value is not None else None
                                 combo_index += 1
-                                tx_freq = rxcc_channel_to_frequency_hz(channel)
 
                                 print("\n" + "#" * 90)
                                 print(
