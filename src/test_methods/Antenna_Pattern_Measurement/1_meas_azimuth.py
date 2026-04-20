@@ -74,15 +74,45 @@ def normalize_hendrix_tx_mode(value) -> str:
     return tx_mode
 
 
+def normalize_hendrix_ctx_level(value) -> str:
+    if value is None:
+        return "high"
+
+    if isinstance(value, bool):
+        return "high" if value else "low"
+
+    if isinstance(value, int):
+        if value in (0, 1):
+            return "high" if value == 1 else "low"
+        raise ValueError(f"sig_gen_1.ctx must be 0 or 1, got {value!r}")
+
+    ctx_value = str(value).strip().lower()
+    if ctx_value in {"1", "high", "true", "on"}:
+        return "high"
+    if ctx_value in {"0", "low", "false", "off"}:
+        return "low"
+
+    raise ValueError(
+        "sig_gen_1.ctx must be one of 0, 1, low, or high; "
+        f"got {value!r}"
+    )
+
+
 def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
     channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
     power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
     tx_mode_raw = sg_cfg.get("tx_mode")
+    ctx_raw = sg_cfg.get("ctx")
     tx_mode = None
+    ctx_level = None
 
     if tx_mode_raw is not None and device_type != "hendrix_tx":
         raise ValueError("sig_gen_1.tx_mode is only supported for device_type 'hendrix_tx'")
+    if ctx_raw is not None and device_type not in {"hendrix_tx", "hendrix_rx"}:
+        raise ValueError(
+            "sig_gen_1.ctx is only supported for device_type 'hendrix_tx' or 'hendrix_rx'"
+        )
 
     if device_type == "rxcc":
         antenna_values = ensure_list(
@@ -105,6 +135,7 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
                 "token": NON_RXCC_ANTENNA_TOKEN,
             }
         ]
+        ctx_level = normalize_hendrix_ctx_level(ctx_raw)
         if device_type == "hendrix_tx":
             tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
@@ -114,6 +145,7 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
         "power_levels": power_levels,
         "antennas": antennas,
         "tx_mode": tx_mode,
+        "ctx_level": ctx_level,
     }
 
 
@@ -1014,6 +1046,7 @@ def run(params, equip):
 
     device_type = sg_sweep_cfg["device_type"]
     tx_mode = sg_sweep_cfg["tx_mode"]
+    ctx_level = sg_sweep_cfg["ctx_level"]
     is_bodyworn_hendrix_tx = (
         device_type == "hendrix_tx" and tx_mode == "bodyworn"
     )
@@ -1047,6 +1080,8 @@ def run(params, equip):
     print(f"      Device type        : {device_type}")
     if tx_mode is not None:
         print(f"      TX mode            : {tx_mode}")
+    if ctx_level is not None:
+        print(f"      CTX                : {1 if ctx_level == 'high' else 0} ({ctx_level})")
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
     print(f"      Boresight (logical): {bore:.1f}°")
@@ -1100,6 +1135,13 @@ def run(params, equip):
         raise RuntimeError(
             "sig_gen_1.device_type requires a signal-generator driver that supports set_device_type()"
         )
+    if ctx_level is not None:
+        if hasattr(sg, "set_ctx"):
+            sg.set_ctx(ctx_level)
+        else:
+            raise RuntimeError(
+                "sig_gen_1.ctx requires a signal-generator driver that supports set_ctx()"
+            )
     try:
         combo_index = 0
         current_channel = None
@@ -1204,6 +1246,7 @@ def run(params, equip):
                                 "sig_gen_1": {
                                     "device_type": device_type,
                                     "tx_mode": tx_mode,
+                                    "ctx": 1 if ctx_level == "high" else 0 if ctx_level is not None else None,
                                     "channel": channel,
                                     "power_level": power_level,
                                     "antenna": antenna,

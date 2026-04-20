@@ -51,6 +51,7 @@ class RXCC(SignalGeneratorBase):
     DEFAULT_DEVICE_TYPE = "rxcc"
     VALID_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
     VALID_ANTENNAS = {"main", "secondary"}
+    VALID_CTX_LEVELS = {"high", "low"}
     COMMAND_PATHS = {
         "rxcc": {
             "start": "/api/devices/rxcc/commands/start-rf",
@@ -63,6 +64,16 @@ class RXCC(SignalGeneratorBase):
         "hendrix_rx": {
             "start": "/api/devices/rx/commands/start-rf",
             "stop": "/api/devices/rx/commands/stop-rf",
+        },
+    }
+    CTX_PATHS = {
+        "hendrix_tx": {
+            "high": "/api/ctx/tx/high",
+            "low": "/api/ctx/tx/low",
+        },
+        "hendrix_rx": {
+            "high": "/api/ctx/rx/high",
+            "low": "/api/ctx/rx/low",
         },
     }
 
@@ -81,6 +92,7 @@ class RXCC(SignalGeneratorBase):
         self._power_level: Optional[int] = None
         self._antenna: Optional[str] = None
         self._device_type = self.DEFAULT_DEVICE_TYPE
+        self._ctx_level = "high"
         self._last_health: Optional[Dict[str, Any]] = None
 
         # Optional constructor defaults
@@ -92,6 +104,8 @@ class RXCC(SignalGeneratorBase):
             self.set_power_level(cfg["power_level"])
         if "antenna" in cfg:
             self.set_antenna(cfg["antenna"])
+        if "ctx" in cfg:
+            self.set_ctx(cfg["ctx"])
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -149,6 +163,27 @@ class RXCC(SignalGeneratorBase):
             )
         self._device_type = device_type
 
+    def set_ctx(self, ctx) -> None:
+        if isinstance(ctx, bool):
+            ctx_level = "high" if ctx else "low"
+        elif isinstance(ctx, int):
+            if ctx not in (0, 1):
+                raise ValueError(f"Hendrix CTX must be 0 or 1, got {ctx}")
+            ctx_level = "high" if ctx == 1 else "low"
+        else:
+            value = str(ctx).strip().lower()
+            if value in {"1", "high", "true", "on"}:
+                ctx_level = "high"
+            elif value in {"0", "low", "false", "off"}:
+                ctx_level = "low"
+            else:
+                raise ValueError(
+                    "Hendrix CTX must be one of 0, 1, low, or high; "
+                    f"got {ctx!r}"
+                )
+
+        self._ctx_level = ctx_level
+
     def configure(
         self,
         *,
@@ -183,6 +218,7 @@ class RXCC(SignalGeneratorBase):
         """
         self.ensure_open()
         self._require_rf_start_parameters()
+        self._apply_hendrix_ctx()
         self._request_json(
             "POST",
             self.COMMAND_PATHS[self._device_type]["start"],
@@ -261,6 +297,10 @@ class RXCC(SignalGeneratorBase):
     def last_health(self) -> Optional[Dict[str, Any]]:
         return self._last_health
 
+    @property
+    def ctx_level(self) -> str:
+        return self._ctx_level
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -286,6 +326,15 @@ class RXCC(SignalGeneratorBase):
             )
         if self._device_type == "rxcc" and self._antenna is None:
             raise RuntimeError("RXCC rf_on() requires antenna to be set before starting RF")
+
+    def _apply_hendrix_ctx(self) -> None:
+        if self._device_type not in self.CTX_PATHS:
+            return
+
+        self._request_json(
+            "POST",
+            self.CTX_PATHS[self._device_type][self._ctx_level],
+        )
 
     def _request_json(
         self,
