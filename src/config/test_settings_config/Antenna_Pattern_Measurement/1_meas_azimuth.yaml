@@ -1,7 +1,7 @@
 DUT_product: "Hendrix-Tx"
 DUT_hardware_config: "V3-04F"
 DUT_serial_number: "002"
-foldername_comment: "bodyworn"
+foldername_comment: "bodyworn_corrected_CTX"
 yaml_comment: ""
 orientations: [ori2]  # [ori1, ori2]
 orientation_photo_location: "C:\Git\DAMspy-core\src\DAMspy_logs\orientations\hendrix_tx"

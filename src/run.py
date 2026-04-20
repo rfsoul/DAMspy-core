@@ -126,8 +126,9 @@ def resolve_runtime_mode(repo_root: Path) -> str:
 
 def build_output_folder_name(current_group: str, timestamp: str, first_params: dict) -> str:
     """Build the top-level run folder name from the current test group and first YAML."""
-    dut_product = first_params.get("DUT_product", "UnknownDUT")
-    dut_serial_number = first_params.get("DUT_serial_number", "UnknownSerial")
+    dut_product = first_params.get("DUT_product") or "UnknownDUT"
+    dut_hardware_config = first_params.get("DUT_hardware_config")
+    dut_serial_number = first_params.get("DUT_serial_number") or "UnknownSerial"
     foldername_comment = first_params.get("foldername_comment")
 
     orientations = first_params.get("orientations", [])
@@ -141,10 +142,17 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     rx_cfg = first_params.get("rx_path", {})
     rx_antenna = rx_cfg.get("antenna", "Unknown")
 
+    dut_identity_parts = [
+        optional_token(dut_product),
+        optional_token(dut_hardware_config),
+        optional_token(dut_serial_number),
+    ]
+    dut_identity = "_".join(part for part in dut_identity_parts if part)
+
     parts = [
         sanitize_windows_path(current_group),
         timestamp,
-        sanitize_windows_path(f"{dut_product}_{dut_serial_number}"),
+        dut_identity or "UnknownDUT_UnknownSerial",
         optional_token(foldername_comment),
         list_token("Ori", orientations),
         list_token("Ch", channels),

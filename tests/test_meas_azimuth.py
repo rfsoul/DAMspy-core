@@ -97,6 +97,7 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
 
         self.assertEqual(config["tx_mode"], "always_in_cradle")
         self.assertEqual(config["ctx_level"], "high")
+        self.assertEqual(config["ctx_levels"], ["high"])
 
     def test_resolve_sig_gen_sweep_config_accepts_ctx_zero_for_hendrix_rx(self):
         config = meas_azimuth.resolve_sig_gen_sweep_config(
@@ -109,6 +110,21 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
         )
 
         self.assertEqual(config["ctx_level"], "low")
+        self.assertEqual(config["ctx_levels"], ["low"])
+
+    def test_resolve_sig_gen_sweep_config_accepts_uppercase_ctx_list(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "hendrix_tx",
+                "tx_mode": "bodyworn",
+                "CTX": [1, 0],
+                "channels": [0],
+                "power_levels": [10],
+            }
+        )
+
+        self.assertIsNone(config["ctx_level"])
+        self.assertEqual(config["ctx_levels"], ["high", "low"])
 
     def test_resolve_sig_gen_sweep_config_rejects_ctx_for_rxcc(self):
         with self.assertRaisesRegex(ValueError, "ctx is only supported"):
@@ -457,6 +473,33 @@ class MeasAzimuthRunTests(unittest.TestCase):
 
         self.assertEqual(equip.signal_generator.device_types, ["hendrix_rx"])
         self.assertEqual(equip.signal_generator.ctx_levels, ["low"])
+
+    def test_run_iterates_all_ctx_values_from_yaml_list(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_rx",
+                    "CTX": [1, 0],
+                    "channels": [7],
+                    "power_levels": [3],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.device_types, ["hendrix_rx"])
+        self.assertEqual(equip.signal_generator.ctx_levels, ["high", "low"])
+        self.assertEqual(len(sweep_calls), 2)
 
 
 if __name__ == "__main__":

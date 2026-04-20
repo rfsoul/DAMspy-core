@@ -1,7 +1,7 @@
 # ------------------------------------------------------------
 # 1_meas_azimuth.py
 #
-# Antenna Pattern Measurement – Azimuth Sweep
+# Antenna Pattern Measurement â€“ Azimuth Sweep
 # Multi-condition version:
 # - manual outer loop for DUT orientation
 # - manual next loop for polarisation
@@ -98,14 +98,39 @@ def normalize_hendrix_ctx_level(value) -> str:
     )
 
 
+def normalize_hendrix_ctx_levels(value) -> list[str]:
+    values = ensure_list(value, "sig_gen_1.CTX")
+    if not values:
+        raise ValueError("sig_gen_1.CTX must not be empty")
+    return [normalize_hendrix_ctx_level(item) for item in values]
+
+
+def ctx_level_to_numeric(ctx_level):
+    if ctx_level is None:
+        return None
+    return 1 if ctx_level == "high" else 0
+
+
+def get_ctx_config_value(sg_cfg: dict):
+    lower_ctx = sg_cfg.get("ctx")
+    upper_ctx = sg_cfg.get("CTX")
+
+    if lower_ctx is not None and upper_ctx is not None and lower_ctx != upper_ctx:
+        raise ValueError("sig_gen_1.ctx and sig_gen_1.CTX must match when both are provided")
+
+    if upper_ctx is not None:
+        return upper_ctx
+    return lower_ctx
+
+
 def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
     channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
     power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
     tx_mode_raw = sg_cfg.get("tx_mode")
-    ctx_raw = sg_cfg.get("ctx")
+    ctx_raw = get_ctx_config_value(sg_cfg)
     tx_mode = None
-    ctx_level = None
+    ctx_levels = [None]
 
     if tx_mode_raw is not None and device_type != "hendrix_tx":
         raise ValueError("sig_gen_1.tx_mode is only supported for device_type 'hendrix_tx'")
@@ -135,7 +160,7 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
                 "token": NON_RXCC_ANTENNA_TOKEN,
             }
         ]
-        ctx_level = normalize_hendrix_ctx_level(ctx_raw)
+        ctx_levels = normalize_hendrix_ctx_levels(ctx_raw if ctx_raw is not None else [1])
         if device_type == "hendrix_tx":
             tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
@@ -145,7 +170,8 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
         "power_levels": power_levels,
         "antennas": antennas,
         "tx_mode": tx_mode,
-        "ctx_level": ctx_level,
+        "ctx_level": ctx_levels[0] if len(ctx_levels) == 1 else None,
+        "ctx_levels": ctx_levels,
     }
 
 
@@ -346,6 +372,7 @@ def build_current_sweep_dict(
     orientation,
     polarisation,
     antenna,
+    ctx=None,
     power_level,
     channel,
     frequency_hz,
@@ -364,6 +391,8 @@ def build_current_sweep_dict(
         "channel": channel,
         "frequency_hz": frequency_hz,
     }
+    if ctx is not None:
+        sweep["ctx"] = ctx
     if battery_mv is not None:
         sweep["battery_mv"] = battery_mv
     return sweep
@@ -387,6 +416,7 @@ def capture_hendrix_tx_battery_mv(
     orientation,
     polarisation,
     antenna,
+    ctx=None,
     power_level,
     channel,
     frequency_hz,
@@ -422,6 +452,7 @@ def capture_hendrix_tx_battery_mv(
                     orientation=orientation,
                     polarisation=polarisation,
                     antenna=antenna,
+                    ctx=ctx,
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=frequency_hz,
@@ -454,6 +485,7 @@ def capture_hendrix_tx_battery_mv(
                     orientation=orientation,
                     polarisation=polarisation,
                     antenna=antenna,
+                    ctx=ctx,
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=frequency_hz,
@@ -596,7 +628,7 @@ def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
 
     point_count = len(az_deg)
     ax.set_title(
-        "Antenna Pattern – Azimuth Cut\n"
+        "Antenna Pattern â€“ Azimuth Cut\n"
         f"Linear E / Emax (points so far: {point_count})",
         pad=20,
     )
@@ -606,7 +638,7 @@ def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
     plt.savefig(out_png)
     plt.close()
 
-    print(f"[PLOT] Updated partial polar plot → {out_png}")
+    print(f"[PLOT] Updated partial polar plot â†’ {out_png}")
 
 
 def run_single_azimuth_sweep(
@@ -623,6 +655,7 @@ def run_single_azimuth_sweep(
     orientation,
     polarisation,
     antenna,
+    ctx=None,
     power_level,
     channel,
     tx_freq,
@@ -659,7 +692,7 @@ def run_single_azimuth_sweep(
         if boresight_only:
             return
         if abs(delta_deg) < 1e-9:
-            print("[POS] Zero move requested – skipping")
+            print("[POS] Zero move requested â€“ skipping")
             return
 
         target = current_az + delta_deg
@@ -673,7 +706,7 @@ def run_single_azimuth_sweep(
                 status="running",
                 current_state={
                     "state": "moving",
-                    "message": f"Moving azimuth from {current_az:+.1f}° to {target:+.1f}°",
+                    "message": f"Moving azimuth from {current_az:+.1f}Â° to {target:+.1f}Â°",
                     "target": {
                         "azimuth_deg": target,
                     },
@@ -687,6 +720,7 @@ def run_single_azimuth_sweep(
                     orientation=orientation,
                     polarisation=polarisation,
                     antenna=antenna,
+                    ctx=ctx,
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
@@ -698,13 +732,13 @@ def run_single_azimuth_sweep(
                     "latest_metadata_path": meta_path,
                     "combo_dir": combo_dir,
                 },
-                event=f"Moving azimuth to {target:+.1f}°",
+                event=f"Moving azimuth to {target:+.1f}Â°",
             )
 
         print(
             f"[POS] Commanding AZ move: "
-            f"{current_az:+.1f}° → {target:+.1f}° "
-            f"(Δ {delta_deg:+.1f}°)"
+            f"{current_az:+.1f}Â° â†’ {target:+.1f}Â° "
+            f"(Î” {delta_deg:+.1f}Â°)"
         )
         pos.go_azimuth(delta_deg)
         current_az = target
@@ -719,7 +753,7 @@ def run_single_azimuth_sweep(
         print("[SWEEP] BEGIN AZIMUTH PATTERN SWEEP")
         print("----------------------------------------------------\n")
 
-        print("[POS] Software azimuth reference set to 0°")
+        print("[POS] Software azimuth reference set to 0Â°")
         current_az = 0.0
         if boresight_only:
             print("[MODE] Boresight-only capture: positioner movement disabled")
@@ -745,6 +779,7 @@ def run_single_azimuth_sweep(
                     orientation=orientation,
                     polarisation=polarisation,
                     antenna=antenna,
+                    ctx=ctx,
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
@@ -782,18 +817,18 @@ def run_single_azimuth_sweep(
                 ),
             )
 
-        print(f"\n[POS] Pre-positioning to +{maxa:.1f}° (no RF capture)")
+        print(f"\n[POS] Pre-positioning to +{maxa:.1f}Â° (no RF capture)")
         move_rel(+maxa)
 
-        print("\n[SWEEP] Measurement phase: +max → 0 → -max\n")
+        print("\n[SWEEP] Measurement phase: +max â†’ 0 â†’ -max\n")
         print(f"[SWEEP] Total points: {total_points}")
-        print(f"[PLOT] Live plot update threshold: {plot_every_deg:.1f}°")
+        print(f"[PLOT] Live plot update threshold: {plot_every_deg:.1f}Â°")
 
         for idx in range(total_points):
             az = current_az
 
             print("\n----------------------------------------------------")
-            print(f"[POINT {idx+1:03d}] AZIMUTH = {az:+.1f}°")
+            print(f"[POINT {idx+1:03d}] AZIMUTH = {az:+.1f}Â°")
             print("----------------------------------------------------")
 
             if use_woym:
@@ -802,7 +837,7 @@ def run_single_azimuth_sweep(
                     latest_woym_path=latest_woym_path,
                     current_state={
                         "state": "measuring",
-                        "message": f"Measuring azimuth point at {az:+.1f}°",
+                        "message": f"Measuring azimuth point at {az:+.1f}Â°",
                         "target": {
                             "azimuth_deg": az,
                         },
@@ -816,6 +851,7 @@ def run_single_azimuth_sweep(
                         orientation=orientation,
                         polarisation=polarisation,
                         antenna=antenna,
+                        ctx=ctx,
                         power_level=power_level,
                         channel=channel,
                         frequency_hz=tx_freq,
@@ -827,7 +863,7 @@ def run_single_azimuth_sweep(
                         "latest_metadata_path": meta_path,
                         "combo_dir": combo_dir,
                     },
-                    event=f"Measuring point {idx + 1}/{total_points} at {az:+.1f}°",
+                    event=f"Measuring point {idx + 1}/{total_points} at {az:+.1f}Â°",
                 )
 
             print("[SA] Arming per-point MAX HOLD capture")
@@ -852,7 +888,7 @@ def run_single_azimuth_sweep(
             f.flush()
 
             print(
-                f"[DATA] az {az:+6.1f}° | "
+                f"[DATA] az {az:+6.1f}Â° | "
                 f"RX = {rx_dbm:7.2f} dBm | "
                 f"Fpk = {pk_f_hz/1e6:.6f} MHz"
             )
@@ -870,6 +906,8 @@ def run_single_azimuth_sweep(
                     "peak_freq_hz": pk_f_hz,
                     "timestamp": iso_now(),
                 }
+                if ctx is not None:
+                    last_measurement["ctx"] = ctx
                 if battery_mv is not None:
                     last_measurement["battery_mv"] = battery_mv
 
@@ -886,6 +924,7 @@ def run_single_azimuth_sweep(
                         orientation=orientation,
                         polarisation=polarisation,
                         antenna=antenna,
+                        ctx=ctx,
                         power_level=power_level,
                         channel=channel,
                         frequency_hz=tx_freq,
@@ -898,7 +937,7 @@ def run_single_azimuth_sweep(
                         "combo_dir": combo_dir,
                     },
                     event=(
-                        f"Measured az {az:+.1f}° "
+                        f"Measured az {az:+.1f}Â° "
                         f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
                     ),
                 )
@@ -930,7 +969,7 @@ def run_single_azimuth_sweep(
                         latest_woym_path=latest_woym_path,
                         current_state={
                             "state": "plotting",
-                            "message": f"Updating live plot at {az:+.1f}°",
+                            "message": f"Updating live plot at {az:+.1f}Â°",
                             "target": {
                                 "azimuth_deg": az,
                             },
@@ -941,20 +980,20 @@ def run_single_azimuth_sweep(
                             "latest_metadata_path": meta_path,
                             "combo_dir": combo_dir,
                         },
-                        event=f"Updating live plot at {az:+.1f}°",
+                        event=f"Updating live plot at {az:+.1f}Â°",
                     )
                 write_partial_polar_plot(csv_path, plot_png_path)
                 last_plot_az = az
 
             if az > -maxa:
-                print(f"[POS] Advancing to next azimuth step (-{step:.1f}°)")
+                print(f"[POS] Advancing to next azimuth step (-{step:.1f}Â°)")
                 move_rel(-step)
 
-        print("\n[POS] Sweep complete – returning to start position")
+        print("\n[POS] Sweep complete â€“ returning to start position")
         move_rel(+maxa)
 
         current_az = 0.0
-        print("[POS] Software azimuth reset to 0°")
+        print("[POS] Software azimuth reset to 0Â°")
 
         if use_woym:
             update_woym_generic(
@@ -978,6 +1017,7 @@ def run_single_azimuth_sweep(
                     orientation=orientation,
                     polarisation=polarisation,
                     antenna=antenna,
+                    ctx=ctx,
                     power_level=power_level,
                     channel=channel,
                     frequency_hz=tx_freq,
@@ -1019,6 +1059,7 @@ def run(params, equip):
 
     # ---------------- YAML parameters ----------------
     dut_product = params.get("DUT_product", "Unknown")
+    dut_hardware_config = params.get("DUT_hardware_config", "")
     dut_serial_number = params.get("DUT_serial_number", "Unknown")
     foldername_comment = params.get("foldername_comment", "")
     yaml_comment = params.get("yaml_comment", "")
@@ -1047,6 +1088,7 @@ def run(params, equip):
     device_type = sg_sweep_cfg["device_type"]
     tx_mode = sg_sweep_cfg["tx_mode"]
     ctx_level = sg_sweep_cfg["ctx_level"]
+    ctx_levels = sg_sweep_cfg["ctx_levels"]
     is_bodyworn_hendrix_tx = (
         device_type == "hendrix_tx" and tx_mode == "bodyworn"
     )
@@ -1066,11 +1108,14 @@ def run(params, equip):
         * len(polarisations)
         * len(antenna_variants)
         * len(power_levels)
+        * len(ctx_levels)
         * len(channels)
     )
 
     print("[CFG] Parsed YAML parameters:")
     print(f"      DUT product        : {dut_product}")
+    if dut_hardware_config:
+        print(f"      DUT hw config      : {dut_hardware_config}")
     print(f"      DUT serial         : {dut_serial_number}")
     print(f"      Folder comment     : {foldername_comment}")
     print(f"      YAML comment       : {yaml_comment}")
@@ -1080,17 +1125,21 @@ def run(params, equip):
     print(f"      Device type        : {device_type}")
     if tx_mode is not None:
         print(f"      TX mode            : {tx_mode}")
-    if ctx_level is not None:
-        print(f"      CTX                : {1 if ctx_level == 'high' else 0} ({ctx_level})")
+    if ctx_levels and ctx_levels[0] is not None:
+        print(
+            "      CTX                : "
+            f"{[ctx_level_to_numeric(level) for level in ctx_levels]} "
+            f"({ctx_levels})"
+        )
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
-    print(f"      Boresight (logical): {bore:.1f}°")
-    print(f"      Max angle          : ±{maxa:.1f}°")
-    print(f"      Step size          : {step:.1f}°")
+    print(f"      Boresight (logical): {bore:.1f}Â°")
+    print(f"      Max angle          : Â±{maxa:.1f}Â°")
+    print(f"      Step size          : {step:.1f}Â°")
     print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
-    print(f"      Live plot every    : {plot_every_deg:.1f}°")
+    print(f"      Live plot every    : {plot_every_deg:.1f}Â°")
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      Channels           : {channels}")
     print(f"      Power levels       : {power_levels}")
@@ -1135,15 +1184,13 @@ def run(params, equip):
         raise RuntimeError(
             "sig_gen_1.device_type requires a signal-generator driver that supports set_device_type()"
         )
-    if ctx_level is not None:
-        if hasattr(sg, "set_ctx"):
-            sg.set_ctx(ctx_level)
-        else:
-            raise RuntimeError(
-                "sig_gen_1.ctx requires a signal-generator driver that supports set_ctx()"
-            )
+    if any(level is not None for level in ctx_levels) and not hasattr(sg, "set_ctx"):
+        raise RuntimeError(
+            "sig_gen_1.ctx requires a signal-generator driver that supports set_ctx()"
+        )
     try:
         combo_index = 0
+        current_ctx_level = None
         current_channel = None
         current_power_level = None
         bodyworn_rf_active = False
@@ -1195,309 +1242,333 @@ def run(params, equip):
                     antenna_label = antenna_cfg["label"]
                     antenna_token = antenna_cfg["token"]
                     for power_level in power_levels:
-                        for channel in channels:
-                            combo_index += 1
-                            tx_freq = rxcc_channel_to_frequency_hz(channel)
-
-                            print("\n" + "#" * 90)
-                            print(
-                                f"[COMBO {combo_index}] "
-                                f"ORI={orientation} | POL={pol} | ANT={antenna_label} | "
-                                f"PWR={power_level} | CH={channel} "
-                                f"({tx_freq/1e6:.3f} MHz)"
+                        for ctx_level in ctx_levels:
+                            ctx_value = ctx_level_to_numeric(ctx_level)
+                            ctx_display = (
+                                f"{ctx_value} ({ctx_level})" if ctx_value is not None else "n/a"
                             )
-                            print("#" * 90)
+                            token_ctx = sanitize_token(ctx_value) if ctx_value is not None else None
+                            for channel in channels:
+                                combo_index += 1
+                                tx_freq = rxcc_channel_to_frequency_hz(channel)
 
-                            token_ori = sanitize_token(orientation)
-                            token_pol = sanitize_token(pol)
-                            token_ant = antenna_token
-                            token_pwr = sanitize_token(power_level)
-                            token_ch = sanitize_token(channel)
+                                print("\n" + "#" * 90)
+                                print(
+                                    f"[COMBO {combo_index}] "
+                                    f"ORI={orientation} | POL={pol} | ANT={antenna_label} | "
+                                    f"PWR={power_level} | CTX={ctx_display} | CH={channel} "
+                                    f"({tx_freq/1e6:.3f} MHz)"
+                                )
+                                print("#" * 90)
 
-                            combo_dir_name = (
-                                f"ori-{token_ori}_"
-                                f"pol-{token_pol}_"
-                                f"ant-{token_ant}_"
-                                f"pwr-{token_pwr}_"
-                                f"ch-{token_ch}"
-                            )
-                            combo_dir = os.path.join(measurement_dir, combo_dir_name)
-                            os.makedirs(combo_dir, exist_ok=True)
+                                token_ori = sanitize_token(orientation)
+                                token_pol = sanitize_token(pol)
+                                token_ant = antenna_token
+                                token_pwr = sanitize_token(power_level)
+                                token_ch = sanitize_token(channel)
 
-                            csv_path = os.path.join(combo_dir, "pattern_azimuth.csv")
-                            meta_path = os.path.join(combo_dir, "metadata.json")
-                            plot_png_path = os.path.join(combo_dir, "pattern_azimuth_EEmax.png")
+                                combo_parts = [
+                                    f"ori-{token_ori}",
+                                    f"pol-{token_pol}",
+                                    f"ant-{token_ant}",
+                                    f"pwr-{token_pwr}",
+                                ]
+                                if token_ctx is not None:
+                                    combo_parts.append(f"ctx-{token_ctx}")
+                                combo_parts.append(f"ch-{token_ch}")
+                                combo_dir_name = "_".join(combo_parts)
+                                combo_dir = os.path.join(measurement_dir, combo_dir_name)
+                                os.makedirs(combo_dir, exist_ok=True)
 
-                            combo_meta = {
-                                "test_method": "1_meas_azimuth",
-                                "measurement": "Azimuth Pattern Measurement",
-                                "axis": axis,
-                                "sweep_mode": sweep_mode,
-                                "DUT_product": dut_product,
-                                "DUT_serial_number": dut_serial_number,
-                                "foldername_comment": foldername_comment,
-                                "yaml_comment": yaml_comment,
-                                "orientation": orientation,
-                                "polarisation": pol,
-                                "boresight_deg": bore,
-                                "max_angle_deg": maxa,
-                                "step_deg": step,
-                                "height_m": height_m,
-                                "sig_gen_1": {
-                                    "device_type": device_type,
-                                    "tx_mode": tx_mode,
-                                    "ctx": 1 if ctx_level == "high" else 0 if ctx_level is not None else None,
-                                    "channel": channel,
-                                    "power_level": power_level,
-                                    "antenna": antenna,
-                                    "frequency_hz": tx_freq,
-                                },
-                                "rx_path": rx_cfg,
-                                "spec_an_1": {
-                                    "center_frequency_hz": tx_freq,
-                                    "span_hz": span_hz,
-                                    "rbw_hz": rbw_hz,
-                                    "vbw_hz": vbw_hz,
-                                },
-                                "capture_method": {
-                                    "type": "per_point_max_hold",
-                                    "max_hold_seconds": hold_s,
-                                    "dwell_seconds": dwell_s,
-                                    "live_plot_every_deg": plot_every_deg,
-                                },
-                                "limits": {
-                                    "lowest_level_dbm": lowest_level_dbm
-                                },
-                            }
+                                csv_path = os.path.join(combo_dir, "pattern_azimuth.csv")
+                                meta_path = os.path.join(combo_dir, "metadata.json")
+                                plot_png_path = os.path.join(combo_dir, "pattern_azimuth_EEmax.png")
 
-                            meta_write(meta_path, combo_meta)
-                            print(f"[META] Written → {meta_path}")
-                            print(f"[OUT]  CSV output  → {csv_path}")
-                            print(f"[OUT]  Plot output → {plot_png_path}")
-
-                            if use_woym:
-                                update_woym_generic(
-                                    run_woym_path=run_woym_path,
-                                    latest_woym_path=latest_woym_path,
-                                    current_state={
-                                        "state": "configuring",
-                                        "message": (
-                                            f"Configuring sweep {combo_index}/{total_sweeps} "
-                                            f"ORI={orientation} POL={pol} ANT={antenna_label} "
-                                            f"PWR={power_level} CH={channel}"
-                                        ),
-                                        "target": {},
+                                combo_meta = {
+                                    "test_method": "1_meas_azimuth",
+                                    "measurement": "Azimuth Pattern Measurement",
+                                    "axis": axis,
+                                    "sweep_mode": sweep_mode,
+                                    "DUT_product": dut_product,
+                                    "DUT_hardware_config": dut_hardware_config,
+                                    "DUT_serial_number": dut_serial_number,
+                                    "foldername_comment": foldername_comment,
+                                    "yaml_comment": yaml_comment,
+                                    "orientation": orientation,
+                                    "polarisation": pol,
+                                    "boresight_deg": bore,
+                                    "max_angle_deg": maxa,
+                                    "step_deg": step,
+                                    "height_m": height_m,
+                                    "sig_gen_1": {
+                                        "device_type": device_type,
+                                        "tx_mode": tx_mode,
+                                        "ctx": ctx_value,
+                                        "channel": channel,
+                                        "power_level": power_level,
+                                        "antenna": antenna,
+                                        "frequency_hz": tx_freq,
                                     },
-                                    current_sweep=build_current_sweep_dict(
+                                    "rx_path": rx_cfg,
+                                    "spec_an_1": {
+                                        "center_frequency_hz": tx_freq,
+                                        "span_hz": span_hz,
+                                        "rbw_hz": rbw_hz,
+                                        "vbw_hz": vbw_hz,
+                                    },
+                                    "capture_method": {
+                                        "type": "per_point_max_hold",
+                                        "max_hold_seconds": hold_s,
+                                        "dwell_seconds": dwell_s,
+                                        "live_plot_every_deg": plot_every_deg,
+                                    },
+                                    "limits": {
+                                        "lowest_level_dbm": lowest_level_dbm
+                                    },
+                                }
+
+                                meta_write(meta_path, combo_meta)
+                                print(f"[META] Written â†’ {meta_path}")
+                                print(f"[OUT]  CSV output  â†’ {csv_path}")
+                                print(f"[OUT]  Plot output â†’ {plot_png_path}")
+
+                                if use_woym:
+                                    update_woym_generic(
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        current_state={
+                                            "state": "configuring",
+                                            "message": (
+                                                f"Configuring sweep {combo_index}/{total_sweeps} "
+                                                f"ORI={orientation} POL={pol} ANT={antenna_label} "
+                                                f"PWR={power_level} CTX={ctx_display} CH={channel}"
+                                            ),
+                                            "target": {},
+                                        },
+                                        current_sweep=build_current_sweep_dict(
+                                            sweep_index=combo_index,
+                                            total_sweeps=total_sweeps,
+                                            point_index=0,
+                                            total_points=sweep_point_count,
+                                            axis=axis,
+                                            orientation=orientation,
+                                            polarisation=pol,
+                                            antenna=antenna_label,
+                                            ctx=ctx_value,
+                                            power_level=power_level,
+                                            channel=channel,
+                                            frequency_hz=tx_freq,
+                                        ),
+                                        artifacts={
+                                            "latest_csv_path": csv_path,
+                                            "latest_plot_path": plot_png_path,
+                                            "latest_metadata_path": meta_path,
+                                            "combo_dir": combo_dir,
+                                        },
+                                        error={
+                                            "status": "none",
+                                            "message": "",
+                                            "where": "",
+                                            "timestamp": "",
+                                        },
+                                        event=(
+                                            f"Prepared sweep {combo_index}/{total_sweeps}: "
+                                            f"ORI={orientation} POL={pol} ANT={antenna_label} "
+                                            f"PWR={power_level} CTX={ctx_display} CH={channel}"
+                                        ),
+                                    )
+
+                                    update_woym_azimuth(
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        spectrum_analyser=build_spectrum_analyser_block(
+                                            requested_center_hz=tx_freq,
+                                            requested_span_hz=span_hz,
+                                            requested_rbw_hz=rbw_hz,
+                                            requested_vbw_hz=vbw_hz,
+                                            last_peak_freq_hz=None,
+                                            last_peak_dbm=None,
+                                        ),
+                                    )
+
+                                # Configure source
+                                if antenna is not None:
+                                    sg.set_antenna(antenna)
+
+                                ctx_change_required = (current_ctx_level != ctx_level)
+                                channel_change_required = (current_channel != channel)
+                                power_change_required = (current_power_level != power_level)
+                                config_change_required = (
+                                    ctx_change_required
+                                    or channel_change_required
+                                    or power_change_required
+                                )
+
+                                if is_bodyworn_hendrix_tx and config_change_required:
+                                    prompt_bodyworn_tx_in_cradle(
+                                        return_from_bodyworn_rf=bodyworn_rf_active
+                                    )
+                                    if bodyworn_rf_active:
+                                        print("[TX] Stopping HENDRIX_TX RF before cradle update")
+                                        sg.rf_off()
+                                        bodyworn_rf_active = False
+                                    current_battery_mv = capture_hendrix_tx_battery_mv(
+                                        sg=sg,
+                                        device_type=device_type,
+                                        combo_meta=combo_meta,
+                                        meta_path=meta_path,
+                                        use_woym=use_woym,
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        current_group=current_group,
+                                        current_test_method=current_test_method,
                                         sweep_index=combo_index,
                                         total_sweeps=total_sweeps,
-                                        point_index=0,
                                         total_points=sweep_point_count,
                                         axis=axis,
                                         orientation=orientation,
                                         polarisation=pol,
                                         antenna=antenna_label,
+                                        ctx=ctx_value,
                                         power_level=power_level,
                                         channel=channel,
                                         frequency_hz=tx_freq,
-                                    ),
-                                    artifacts={
-                                        "latest_csv_path": csv_path,
-                                        "latest_plot_path": plot_png_path,
-                                        "latest_metadata_path": meta_path,
-                                        "combo_dir": combo_dir,
-                                    },
-                                    error={
-                                        "status": "none",
-                                        "message": "",
-                                        "where": "",
-                                        "timestamp": "",
-                                    },
-                                    event=(
-                                        f"Prepared sweep {combo_index}/{total_sweeps}: "
-                                        f"ORI={orientation} POL={pol} ANT={antenna_label} "
-                                        f"PWR={power_level} CH={channel}"
-                                    ),
-                                )
-
-                                update_woym_azimuth(
-                                    run_woym_path=run_woym_path,
-                                    latest_woym_path=latest_woym_path,
-                                    spectrum_analyser=build_spectrum_analyser_block(
-                                        requested_center_hz=tx_freq,
-                                        requested_span_hz=span_hz,
-                                        requested_rbw_hz=rbw_hz,
-                                        requested_vbw_hz=vbw_hz,
-                                        last_peak_freq_hz=None,
-                                        last_peak_dbm=None,
-                                    ),
-                                )
-
-                            # Configure source
-                            if antenna is not None:
-                                sg.set_antenna(antenna)
-
-                            channel_change_required = (current_channel != channel)
-                            power_change_required = (current_power_level != power_level)
-
-                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
-                                prompt_bodyworn_tx_in_cradle(
-                                    return_from_bodyworn_rf=bodyworn_rf_active
-                                )
-                                if bodyworn_rf_active:
-                                    print("[TX] Stopping HENDRIX_TX RF before cradle update")
-                                    sg.rf_off()
-                                    bodyworn_rf_active = False
-                                current_battery_mv = capture_hendrix_tx_battery_mv(
-                                    sg=sg,
-                                    device_type=device_type,
-                                    combo_meta=combo_meta,
-                                    meta_path=meta_path,
-                                    use_woym=use_woym,
-                                    run_woym_path=run_woym_path,
-                                    latest_woym_path=latest_woym_path,
-                                    current_group=current_group,
-                                    current_test_method=current_test_method,
-                                    sweep_index=combo_index,
-                                    total_sweeps=total_sweeps,
-                                    total_points=sweep_point_count,
-                                    axis=axis,
-                                    orientation=orientation,
-                                    polarisation=pol,
-                                    antenna=antenna_label,
-                                    power_level=power_level,
-                                    channel=channel,
-                                    frequency_hz=tx_freq,
-                                    csv_path=csv_path,
-                                    plot_png_path=plot_png_path,
-                                    combo_dir=combo_dir,
-                                )
-
-                            if power_change_required:
-                                sg.set_power_level(power_level)
-                            if channel_change_required:
-                                sg.set_channel(channel)
-
-                            if is_bodyworn_hendrix_tx and (channel_change_required or power_change_required):
-                                print(f"[TX] Starting {device_type.upper()} RF")
-                                sg.rf_on()
-                                bodyworn_rf_active = True
-                                prompt_bodyworn_tx_remove_from_cradle()
-
-                            current_channel = channel
-                            current_power_level = power_level
-
-                            # Configure analyser
-                            print("\n[SA] Configuring spectrum analyser (narrowband mode)")
-                            print(
-                                f"[SA] Requested retune: CH={channel} "
-                                f"FREQ={tx_freq/1e6:.6f} MHz "
-                                f"SPAN={span_hz/1e3:.1f} kHz "
-                                f"RBW={rbw_hz/1e3:.1f} kHz "
-                                f"VBW={vbw_hz/1e3:.1f} kHz"
-                            )
-                            verified_sa = sa.configure_narrowband(
-                                center_hz=tx_freq,
-                                span_hz=span_hz,
-                                rbw_hz=rbw_hz,
-                                vbw_hz=vbw_hz,
-                            )
-                            print(
-                                "[SA] Verified retune: "
-                                f"CENT={verified_sa['center_hz']/1e6:.6f} MHz "
-                                f"SPAN={verified_sa['span_hz']/1e3:.1f} kHz "
-                                f"RBW={verified_sa['rbw_hz']/1e3:.1f} kHz "
-                                f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
-                            )
-
-                            if is_bodyworn_hendrix_tx:
-                                battery_mv = current_battery_mv
-                                if battery_mv is not None:
-                                    combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
-                                    meta_write(meta_path, combo_meta)
-                                if bodyworn_rf_active:
-                                    print(
-                                        "[TX] Hendrix TX bodyworn mode: "
-                                        "RF already on for this sweep"
+                                        csv_path=csv_path,
+                                        plot_png_path=plot_png_path,
+                                        combo_dir=combo_dir,
                                     )
-                                else:
-                                    print(
-                                        "[TX] Hendrix TX bodyworn mode: "
-                                        "awaiting cradle update before RF start"
-                                    )
-                            else:
-                                print(f"[TX] Starting {device_type.upper()} RF")
-                                sg.rf_on()
-                                battery_mv = capture_hendrix_tx_battery_mv(
-                                    sg=sg,
-                                    device_type=device_type,
-                                    combo_meta=combo_meta,
-                                    meta_path=meta_path,
-                                    use_woym=use_woym,
-                                    run_woym_path=run_woym_path,
-                                    latest_woym_path=latest_woym_path,
-                                    current_group=current_group,
-                                    current_test_method=current_test_method,
-                                    sweep_index=combo_index,
-                                    total_sweeps=total_sweeps,
-                                    total_points=sweep_point_count,
-                                    axis=axis,
-                                    orientation=orientation,
-                                    polarisation=pol,
-                                    antenna=antenna_label,
-                                    power_level=power_level,
-                                    channel=channel,
-                                    frequency_hz=tx_freq,
-                                    csv_path=csv_path,
-                                    plot_png_path=plot_png_path,
-                                    combo_dir=combo_dir,
+
+                                if ctx_change_required and ctx_level is not None:
+                                    print(f"[TX] Setting Hendrix CTX to {ctx_display}")
+                                    sg.set_ctx(ctx_level)
+                                if power_change_required:
+                                    sg.set_power_level(power_level)
+                                if channel_change_required:
+                                    sg.set_channel(channel)
+
+                                if is_bodyworn_hendrix_tx and config_change_required:
+                                    print(f"[TX] Starting {device_type.upper()} RF")
+                                    sg.rf_on()
+                                    bodyworn_rf_active = True
+                                    prompt_bodyworn_tx_remove_from_cradle()
+
+                                current_ctx_level = ctx_level
+                                current_channel = channel
+                                current_power_level = power_level
+
+                                # Configure analyser
+                                print("\n[SA] Configuring spectrum analyser (narrowband mode)")
+                                print(
+                                    f"[SA] Requested retune: CH={channel} "
+                                    f"FREQ={tx_freq/1e6:.6f} MHz "
+                                    f"SPAN={span_hz/1e3:.1f} kHz "
+                                    f"RBW={rbw_hz/1e3:.1f} kHz "
+                                    f"VBW={vbw_hz/1e3:.1f} kHz"
                                 )
-                            try:
-                                run_single_azimuth_sweep(
-                                    pos=pos,
-                                    sa=sa,
-                                    csv_path=csv_path,
-                                    plot_png_path=plot_png_path,
-                                    run_woym_path=run_woym_path,
-                                    latest_woym_path=latest_woym_path,
-                                    use_woym=use_woym,
-                                    current_group=current_group,
-                                    current_test_method=current_test_method,
-                                    orientation=orientation,
-                                    polarisation=pol,
-                                    antenna=antenna_label,
-                                    power_level=power_level,
-                                    channel=channel,
-                                    tx_freq=tx_freq,
-                                    sweep_index=combo_index,
-                                    total_sweeps=total_sweeps,
-                                    sweep_mode=sweep_mode,
-                                    maxa=maxa,
-                                    step=step,
-                                    dwell_s=dwell_s,
-                                    hold_s=hold_s,
-                                    lowest_level_dbm=lowest_level_dbm,
-                                    plot_every_deg=plot_every_deg,
-                                    combo_dir=combo_dir,
-                                    meta_path=meta_path,
+                                verified_sa = sa.configure_narrowband(
+                                    center_hz=tx_freq,
                                     span_hz=span_hz,
                                     rbw_hz=rbw_hz,
                                     vbw_hz=vbw_hz,
-                                    battery_mv=battery_mv,
                                 )
-                            except Exception as e:
-                                if use_woym:
-                                    set_woym_error(
-                                        run_woym_path,
-                                        latest_woym_path,
-                                        f"Azimuth sweep failed: {e}",
-                                        "1_meas_azimuth.run_single_azimuth_sweep",
+                                print(
+                                    "[SA] Verified retune: "
+                                    f"CENT={verified_sa['center_hz']/1e6:.6f} MHz "
+                                    f"SPAN={verified_sa['span_hz']/1e3:.1f} kHz "
+                                    f"RBW={verified_sa['rbw_hz']/1e3:.1f} kHz "
+                                    f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
+                                )
+
+                                if is_bodyworn_hendrix_tx:
+                                    battery_mv = current_battery_mv
+                                    if battery_mv is not None:
+                                        combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
+                                        meta_write(meta_path, combo_meta)
+                                    if bodyworn_rf_active:
+                                        print(
+                                            "[TX] Hendrix TX bodyworn mode: "
+                                            "RF already on for this sweep"
+                                        )
+                                    else:
+                                        print(
+                                            "[TX] Hendrix TX bodyworn mode: "
+                                            "awaiting cradle update before RF start"
+                                        )
+                                else:
+                                    print(f"[TX] Starting {device_type.upper()} RF")
+                                    sg.rf_on()
+                                    battery_mv = capture_hendrix_tx_battery_mv(
+                                        sg=sg,
+                                        device_type=device_type,
+                                        combo_meta=combo_meta,
+                                        meta_path=meta_path,
+                                        use_woym=use_woym,
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        current_group=current_group,
+                                        current_test_method=current_test_method,
+                                        sweep_index=combo_index,
+                                        total_sweeps=total_sweeps,
+                                        total_points=sweep_point_count,
+                                        axis=axis,
+                                        orientation=orientation,
+                                        polarisation=pol,
+                                        antenna=antenna_label,
+                                        ctx=ctx_value,
+                                        power_level=power_level,
+                                        channel=channel,
+                                        frequency_hz=tx_freq,
+                                        csv_path=csv_path,
+                                        plot_png_path=plot_png_path,
+                                        combo_dir=combo_dir,
                                     )
-                                raise
-                            finally:
-                                if not is_bodyworn_hendrix_tx:
-                                    print(f"[TX] Stopping {device_type.upper()} RF")
-                                    sg.rf_off()
+                                try:
+                                    run_single_azimuth_sweep(
+                                        pos=pos,
+                                        sa=sa,
+                                        csv_path=csv_path,
+                                        plot_png_path=plot_png_path,
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        use_woym=use_woym,
+                                        current_group=current_group,
+                                        current_test_method=current_test_method,
+                                        orientation=orientation,
+                                        polarisation=pol,
+                                        antenna=antenna_label,
+                                        ctx=ctx_value,
+                                        power_level=power_level,
+                                        channel=channel,
+                                        tx_freq=tx_freq,
+                                        sweep_index=combo_index,
+                                        total_sweeps=total_sweeps,
+                                        sweep_mode=sweep_mode,
+                                        maxa=maxa,
+                                        step=step,
+                                        dwell_s=dwell_s,
+                                        hold_s=hold_s,
+                                        lowest_level_dbm=lowest_level_dbm,
+                                        plot_every_deg=plot_every_deg,
+                                        combo_dir=combo_dir,
+                                        meta_path=meta_path,
+                                        span_hz=span_hz,
+                                        rbw_hz=rbw_hz,
+                                        vbw_hz=vbw_hz,
+                                        battery_mv=battery_mv,
+                                    )
+                                except Exception as e:
+                                    if use_woym:
+                                        set_woym_error(
+                                            run_woym_path,
+                                            latest_woym_path,
+                                            f"Azimuth sweep failed: {e}",
+                                            "1_meas_azimuth.run_single_azimuth_sweep",
+                                        )
+                                    raise
+                                finally:
+                                    if not is_bodyworn_hendrix_tx:
+                                        print(f"[TX] Stopping {device_type.upper()} RF")
+                                        sg.rf_off()
 
     except Exception:
         raise
