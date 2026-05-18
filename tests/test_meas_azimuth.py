@@ -150,6 +150,24 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
                 }
             )
 
+    def test_wireless_pro_rx_uses_wirepro_sweep_fields(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "wireless-pro-rx",
+                "wirepro_freq": [78],
+                "wirepro_power": [-4],
+                "antennas": ["main"],
+            }
+        )
+
+        self.assertEqual(config["device_type"], "wireless-pro-rx")
+        self.assertEqual(config["channels"], [78])
+        self.assertEqual(config["power_levels"], [-4])
+        self.assertEqual(config["ctx_levels"], [None])
+        self.assertEqual(config["frequency_label"], "wirepro_freq")
+        self.assertEqual(config["power_label"], "wirepro_power")
+        self.assertEqual(meas_azimuth.wirepro_freq_to_frequency_hz(78), 2_478_000_000)
+
     def test_capture_hendrix_tx_battery_mv_persists_metadata_and_updates_woym(self):
         class FakeSignalGenerator:
             def read_battery_info(self):
@@ -260,6 +278,8 @@ class _FakeSignalGenerator:
         self.ctx_levels = []
         self.antennas = []
         self.power_levels = []
+        self.wirepro_freqs = []
+        self.wirepro_powers = []
         self.channels = []
         self.rf_on_calls = 0
         self.rf_off_calls = 0
@@ -287,9 +307,17 @@ class _FakeSignalGenerator:
         self.power_levels.append(power_level)
         self.event_log.append(f"power:{power_level}")
 
+    def set_wirepro_power(self, wirepro_power):
+        self.wirepro_powers.append(wirepro_power)
+        self.event_log.append(f"wirepro_power:{wirepro_power}")
+
     def set_channel(self, channel):
         self.channels.append(channel)
         self.event_log.append(f"channel:{channel}")
+
+    def set_wirepro_freq(self, wirepro_freq):
+        self.wirepro_freqs.append(wirepro_freq)
+        self.event_log.append(f"wirepro_freq:{wirepro_freq}")
 
     def rf_on(self):
         self.rf_on_calls += 1
@@ -504,6 +532,37 @@ class MeasAzimuthRunTests(unittest.TestCase):
             [(call["channel"], call["ctx"]) for call in sweep_calls],
             [(7, 1), (7, 0), (8, 1), (8, 0)],
         )
+
+    def test_run_wireless_pro_rx_uses_wirepro_fields_for_rf_and_sa_center(self):
+        equip = _FakeEquipment()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: None,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.device_types, ["wireless-pro-rx"])
+        self.assertEqual(equip.signal_generator.antennas, ["main"])
+        self.assertEqual(equip.signal_generator.wirepro_freqs, [78])
+        self.assertEqual(equip.signal_generator.wirepro_powers, [-4])
+        self.assertEqual(equip.signal_generator.ctx_levels, [])
+        self.assertEqual(equip.signal_generator.channels, [])
+        self.assertEqual(equip.signal_generator.power_levels, [])
+        self.assertEqual(equip.spectrum_analyser.calls[0]["center_hz"], 2_478_000_000)
 
 
 if __name__ == "__main__":

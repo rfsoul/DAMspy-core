@@ -127,6 +127,31 @@ class RXCCTests(unittest.TestCase):
         )
         self.assertTrue(driver.rf_enabled)
 
+    def test_wireless_pro_rx_start_uses_wirepro_payload(self):
+        driver = self.make_driver()
+        driver.set_device_type("wireless-pro-rx")
+        driver.set_antenna("main")
+        driver.set_channel(17)
+        driver.set_power_level(6)
+        driver.set_wirepro_freq(78)
+        driver.set_wirepro_power(-4)
+
+        captured = self._capture_request(driver)
+
+        self.assertEqual(
+            captured["url"],
+            "http://example.test:8000/api/devices/wireless-pro-rx/commands/start-rf",
+        )
+        self.assertEqual(
+            captured["payload"],
+            {
+                "device": "wireless-pro-rx",
+                "antenna": "main",
+                "wirepro_freq": 78,
+                "wirepro_power": -4.0,
+            },
+        )
+
     def test_hendrix_tx_start_posts_ctx_high_before_rf_start_by_default(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_tx")
@@ -324,6 +349,15 @@ class RXCCTests(unittest.TestCase):
         driver.set_power_level(4)
 
         with self.assertRaisesRegex(RuntimeError, "antenna"):
+            driver.rf_on()
+
+    def test_wireless_pro_rx_requires_wirepro_fields_and_antenna(self):
+        driver = self.make_driver()
+        driver.set_device_type("wireless-pro-rx")
+        driver.set_channel(11)
+        driver.set_power_level(4)
+
+        with self.assertRaisesRegex(RuntimeError, "wirepro_freq"):
             driver.rf_on()
 
     def test_422_maps_to_validation_error(self):

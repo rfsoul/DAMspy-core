@@ -35,13 +35,15 @@ dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
-  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", or "hendrix_rx"
+  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
   tx_power: 18 #in dBm
   channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
   power_levels: [10]
   CTX: [1,0]
+  # wirepro_freq: [78]  # Wireless Pro RX only: 2400 MHz + this MHz value
+  # wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
   #antennas: ["main", "secondary"]
 
 rx_path:
@@ -51,7 +53,8 @@ rx_path:
   rx_cable_loss: 4.6 #dB at 2.45GHz
   rx_dist_m: 3.02 # Distance in metres from centre of DAMS to Rx antenna
 
-spec_an_1:  # signal hound BBD60
+spec_an_1:
+  type: signal hound SA44B  # or signal hound BBD60
   span_hz: 100000
   rbw_hz: 10000
   vbw_hz: 10000

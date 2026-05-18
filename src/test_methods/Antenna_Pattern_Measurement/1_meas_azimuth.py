@@ -21,7 +21,7 @@ from time import sleep, time
 
 import matplotlib.pyplot as plt
 
-VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
+VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
 VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
 DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
 NON_RXCC_ANTENNA_LABEL = "n/a"
@@ -40,12 +40,26 @@ def rxcc_channel_to_frequency_hz(channel: int) -> int:
     return 2_400_000_000 + channel * 1_000_000
 
 
+def wirepro_freq_to_frequency_hz(wirepro_freq: int) -> int:
+    wirepro_freq = int(wirepro_freq)
+    if not (0 <= wirepro_freq <= 99):
+        raise ValueError(f"Wireless Pro RX wirepro_freq must be 0..99, got {wirepro_freq}")
+    return 2_400_000_000 + wirepro_freq * 1_000_000
+
+
 def ensure_list(value, name: str):
     if isinstance(value, list):
         return value
     if value is None:
         raise ValueError(f"Missing required list-like field: {name}")
     return [value]
+
+
+def get_first_present(mapping: dict, keys):
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
 
 
 def normalize_sig_gen_device_type(value) -> str:
@@ -125,8 +139,18 @@ def get_ctx_config_value(sg_cfg: dict):
 
 def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     device_type = normalize_sig_gen_device_type(sg_cfg.get("device_type"))
-    channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
-    power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
+    if device_type == "wireless-pro-rx":
+        channels = ensure_list(
+            get_first_present(sg_cfg, ("wirepro_freq", "Wpro_freq", "wpro_freq")),
+            "sig_gen_1.wirepro_freq",
+        )
+        power_levels = ensure_list(
+            get_first_present(sg_cfg, ("wirepro_power", "wirepro_powe", "Wpro_power", "wpro_power")),
+            "sig_gen_1.wirepro_power",
+        )
+    else:
+        channels = ensure_list(sg_cfg.get("channels"), "sig_gen_1.channels")
+        power_levels = ensure_list(sg_cfg.get("power_levels"), "sig_gen_1.power_levels")
     tx_mode_raw = sg_cfg.get("tx_mode")
     ctx_raw = get_ctx_config_value(sg_cfg)
     tx_mode = None
@@ -139,7 +163,7 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
             "sig_gen_1.ctx is only supported for device_type 'hendrix_tx' or 'hendrix_rx'"
         )
 
-    if device_type == "rxcc":
+    if device_type in {"rxcc", "wireless-pro-rx"}:
         antenna_values = ensure_list(
             sg_cfg.get("antennas", sg_cfg.get("antenna")),
             "sig_gen_1.antennas",
@@ -172,6 +196,8 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
         "tx_mode": tx_mode,
         "ctx_level": ctx_levels[0] if len(ctx_levels) == 1 else None,
         "ctx_levels": ctx_levels,
+        "frequency_label": "wirepro_freq" if device_type == "wireless-pro-rx" else "channel",
+        "power_label": "wirepro_power" if device_type == "wireless-pro-rx" else "power_level",
     }
 
 
@@ -1094,6 +1120,8 @@ def run(params, equip):
     )
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
+    frequency_label = sg_sweep_cfg["frequency_label"]
+    power_label = sg_sweep_cfg["power_label"]
     antenna_variants = sg_sweep_cfg["antennas"]
     antenna_labels = [item["label"] for item in antenna_variants]
 
@@ -1141,8 +1169,8 @@ def run(params, equip):
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
     print(f"      Live plot every    : {plot_every_deg:.1f}Â°")
     print(f"      Total sweeps       : {total_sweeps}")
-    print(f"      Channels           : {channels}")
-    print(f"      Power levels       : {power_levels}")
+    print(f"      {frequency_label:<18} : {channels}")
+    print(f"      {power_label:<18} : {power_levels}")
     print(f"      Antennas           : {antenna_labels}")
     print(f"      RX path            : {rx_cfg}")
     print(f"      SA span            : {span_hz/1e3:.1f} kHz")
@@ -1243,7 +1271,11 @@ def run(params, equip):
                     antenna_token = antenna_cfg["token"]
                     for power_level in power_levels:
                         for channel in channels:
-                            tx_freq = rxcc_channel_to_frequency_hz(channel)
+                            tx_freq = (
+                                wirepro_freq_to_frequency_hz(channel)
+                                if device_type == "wireless-pro-rx"
+                                else rxcc_channel_to_frequency_hz(channel)
+                            )
                             for ctx_level in ctx_levels:
                                 ctx_value = ctx_level_to_numeric(ctx_level)
                                 ctx_display = (
@@ -1256,7 +1288,8 @@ def run(params, equip):
                                 print(
                                     f"[COMBO {combo_index}] "
                                     f"ORI={orientation} | POL={pol} | ANT={antenna_label} | "
-                                    f"PWR={power_level} | CTX={ctx_display} | CH={channel} "
+                                    f"{power_label.upper()}={power_level} | CTX={ctx_display} | "
+                                    f"{frequency_label.upper()}={channel} "
                                     f"({tx_freq/1e6:.3f} MHz)"
                                 )
                                 print("#" * 90)
@@ -1266,16 +1299,18 @@ def run(params, equip):
                                 token_ant = antenna_token
                                 token_pwr = sanitize_token(power_level)
                                 token_ch = sanitize_token(channel)
+                                token_freq_prefix = "wfreq" if device_type == "wireless-pro-rx" else "ch"
+                                token_power_prefix = "wpwr" if device_type == "wireless-pro-rx" else "pwr"
 
                                 combo_parts = [
                                     f"ori-{token_ori}",
                                     f"pol-{token_pol}",
                                     f"ant-{token_ant}",
-                                    f"pwr-{token_pwr}",
+                                    f"{token_power_prefix}-{token_pwr}",
                                 ]
                                 if token_ctx is not None:
                                     combo_parts.append(f"ctx-{token_ctx}")
-                                combo_parts.append(f"ch-{token_ch}")
+                                combo_parts.append(f"{token_freq_prefix}-{token_ch}")
                                 combo_dir_name = "_".join(combo_parts)
                                 combo_dir = os.path.join(measurement_dir, combo_dir_name)
                                 os.makedirs(combo_dir, exist_ok=True)
@@ -1306,6 +1341,8 @@ def run(params, equip):
                                         "ctx": ctx_value,
                                         "channel": channel,
                                         "power_level": power_level,
+                                        "wirepro_freq": channel if device_type == "wireless-pro-rx" else None,
+                                        "wirepro_power": power_level if device_type == "wireless-pro-rx" else None,
                                         "antenna": antenna,
                                         "frequency_hz": tx_freq,
                                     },
@@ -1341,7 +1378,8 @@ def run(params, equip):
                                             "message": (
                                                 f"Configuring sweep {combo_index}/{total_sweeps} "
                                                 f"ORI={orientation} POL={pol} ANT={antenna_label} "
-                                                f"PWR={power_level} CTX={ctx_display} CH={channel}"
+                                                f"{power_label.upper()}={power_level} CTX={ctx_display} "
+                                                f"{frequency_label.upper()}={channel}"
                                             ),
                                             "target": {},
                                         },
@@ -1374,7 +1412,8 @@ def run(params, equip):
                                         event=(
                                             f"Prepared sweep {combo_index}/{total_sweeps}: "
                                             f"ORI={orientation} POL={pol} ANT={antenna_label} "
-                                            f"PWR={power_level} CTX={ctx_display} CH={channel}"
+                                            f"{power_label.upper()}={power_level} CTX={ctx_display} "
+                                            f"{frequency_label.upper()}={channel}"
                                         ),
                                     )
 
@@ -1441,10 +1480,28 @@ def run(params, equip):
                                 if ctx_change_required and ctx_level is not None:
                                     print(f"[TX] Setting Hendrix CTX to {ctx_display}")
                                     sg.set_ctx(ctx_level)
-                                if power_change_required:
-                                    sg.set_power_level(power_level)
-                                if channel_change_required:
-                                    sg.set_channel(channel)
+                                if device_type == "wireless-pro-rx":
+                                    if power_change_required:
+                                        if hasattr(sg, "set_wirepro_power"):
+                                            sg.set_wirepro_power(power_level)
+                                        else:
+                                            raise RuntimeError(
+                                                "wireless-pro-rx requires a signal-generator driver "
+                                                "that supports set_wirepro_power()"
+                                            )
+                                    if channel_change_required:
+                                        if hasattr(sg, "set_wirepro_freq"):
+                                            sg.set_wirepro_freq(channel)
+                                        else:
+                                            raise RuntimeError(
+                                                "wireless-pro-rx requires a signal-generator driver "
+                                                "that supports set_wirepro_freq()"
+                                            )
+                                else:
+                                    if power_change_required:
+                                        sg.set_power_level(power_level)
+                                    if channel_change_required:
+                                        sg.set_channel(channel)
 
                                 if is_bodyworn_hendrix_tx and config_change_required:
                                     print(f"[TX] Starting {device_type.upper()} RF")
@@ -1459,7 +1516,7 @@ def run(params, equip):
                                 # Configure analyser
                                 print("\n[SA] Configuring spectrum analyser (narrowband mode)")
                                 print(
-                                    f"[SA] Requested retune: CH={channel} "
+                                    f"[SA] Requested retune: {frequency_label.upper()}={channel} "
                                     f"FREQ={tx_freq/1e6:.6f} MHz "
                                     f"SPAN={span_hz/1e3:.1f} kHz "
                                     f"RBW={rbw_hz/1e3:.1f} kHz "

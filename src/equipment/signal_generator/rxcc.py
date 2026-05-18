@@ -27,10 +27,15 @@ class RXCC(SignalGeneratorBase):
     - rxcc
     - hendrix_tx
     - hendrix_rx
+    - wireless-pro-rx
 
     Shared RF controls:
     - channel: integer 0..80
     - power_level: integer 0..10
+
+    Wireless Pro RX RF controls:
+    - wirepro_freq: integer 0..99, interpreted as 2400 MHz + value MHz
+    - wirepro_power: dBm level, may be negative
 
     RXCC-only RF control:
     - antenna: "main" or "secondary"
@@ -45,11 +50,13 @@ class RXCC(SignalGeneratorBase):
     Optional defaults may also be provided in cfg:
         - channel
         - power_level
+        - wirepro_freq
+        - wirepro_power
         - antenna
     """
 
     DEFAULT_DEVICE_TYPE = "rxcc"
-    VALID_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx"}
+    VALID_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
     VALID_ANTENNAS = {"main", "secondary"}
     VALID_CTX_LEVELS = {"high", "low"}
     COMMAND_PATHS = {
@@ -64,6 +71,10 @@ class RXCC(SignalGeneratorBase):
         "hendrix_rx": {
             "start": "/api/devices/rx/commands/start-rf",
             "stop": "/api/devices/rx/commands/stop-rf",
+        },
+        "wireless-pro-rx": {
+            "start": "/api/devices/wireless-pro-rx/commands/start-rf",
+            "stop": "/api/devices/wireless-pro-rx/commands/stop-rf",
         },
     }
     CTX_PATHS = {
@@ -90,6 +101,8 @@ class RXCC(SignalGeneratorBase):
 
         self._channel: Optional[int] = None
         self._power_level: Optional[int] = None
+        self._wirepro_freq: Optional[int] = None
+        self._wirepro_power: Optional[float] = None
         self._antenna: Optional[str] = None
         self._device_type = self.DEFAULT_DEVICE_TYPE
         self._ctx_level = "high"
@@ -102,6 +115,10 @@ class RXCC(SignalGeneratorBase):
             self.set_channel(cfg["channel"])
         if "power_level" in cfg:
             self.set_power_level(cfg["power_level"])
+        if "wirepro_freq" in cfg:
+            self.set_wirepro_freq(cfg["wirepro_freq"])
+        if "wirepro_power" in cfg:
+            self.set_wirepro_power(cfg["wirepro_power"])
         if "antenna" in cfg:
             self.set_antenna(cfg["antenna"])
         if "ctx" in cfg:
@@ -145,6 +162,15 @@ class RXCC(SignalGeneratorBase):
         if not (0 <= power_level <= 10):
             raise ValueError(f"RXCC power_level must be 0..10, got {power_level}")
         self._power_level = power_level
+
+    def set_wirepro_freq(self, wirepro_freq: int) -> None:
+        wirepro_freq = int(wirepro_freq)
+        if not (0 <= wirepro_freq <= 99):
+            raise ValueError(f"Wireless Pro RX wirepro_freq must be 0..99, got {wirepro_freq}")
+        self._wirepro_freq = wirepro_freq
+
+    def set_wirepro_power(self, wirepro_power: float) -> None:
+        self._wirepro_power = float(wirepro_power)
 
     def set_antenna(self, antenna: str) -> None:
         antenna = str(antenna).strip().lower()
@@ -196,6 +222,21 @@ class RXCC(SignalGeneratorBase):
         """
         self.set_channel(channel)
         self.set_power_level(power_level)
+        if antenna is not None:
+            self.set_antenna(antenna)
+
+    def configure_wirepro(
+        self,
+        *,
+        wirepro_freq: int,
+        wirepro_power: float,
+        antenna: Optional[str] = None,
+    ) -> None:
+        """
+        Convenience method for setting Wireless Pro RX RF-start parameters together.
+        """
+        self.set_wirepro_freq(wirepro_freq)
+        self.set_wirepro_power(wirepro_power)
         if antenna is not None:
             self.set_antenna(antenna)
 
@@ -286,6 +327,14 @@ class RXCC(SignalGeneratorBase):
         return self._power_level
 
     @property
+    def wirepro_freq(self) -> Optional[int]:
+        return self._wirepro_freq
+
+    @property
+    def wirepro_power(self) -> Optional[float]:
+        return self._wirepro_power
+
+    @property
     def antenna(self) -> Optional[str]:
         return self._antenna
 
@@ -305,6 +354,14 @@ class RXCC(SignalGeneratorBase):
     # Internal helpers
     # ------------------------------------------------------------------
     def _build_start_payload(self) -> Dict[str, Any]:
+        if self._device_type == "wireless-pro-rx":
+            return {
+                "device": "wireless-pro-rx",
+                "antenna": self._antenna,
+                "wirepro_freq": self._wirepro_freq,
+                "wirepro_power": self._wirepro_power,
+            }
+
         payload = {
             "channel": self._channel,
             "power": self._power_level,
@@ -314,6 +371,21 @@ class RXCC(SignalGeneratorBase):
         return payload
 
     def _require_rf_start_parameters(self) -> None:
+        if self._device_type == "wireless-pro-rx":
+            missing = []
+            if self._wirepro_freq is None:
+                missing.append("wirepro_freq")
+            if self._wirepro_power is None:
+                missing.append("wirepro_power")
+            if self._antenna is None:
+                missing.append("antenna")
+            if missing:
+                raise RuntimeError(
+                    "Wireless Pro RX rf_on() requires "
+                    f"{', '.join(missing)} to be set before starting RF"
+                )
+            return
+
         missing = []
         if self._channel is None:
             missing.append("channel")
@@ -405,6 +477,8 @@ class RXCC(SignalGeneratorBase):
             return "Hendrix HID"
         if self._device_type == "hendrix_rx":
             return "Hendrix RX"
+        if self._device_type == "wireless-pro-rx":
+            return "Wireless Pro RX"
         return "RXCC"
 
 

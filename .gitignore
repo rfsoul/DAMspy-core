@@ -1,3 +1,5 @@
 .idea/
 .venv/
 /operating_env/.localenv
+__pycache__/
+*.py[cod]
