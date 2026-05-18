@@ -156,12 +156,19 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     tx_mode = None
     ctx_levels = [None]
 
-    if tx_mode_raw is not None and device_type != "hendrix_tx":
-        raise ValueError("sig_gen_1.tx_mode is only supported for device_type 'hendrix_tx'")
+    if tx_mode_raw is not None and device_type not in {"hendrix_tx", "wireless-pro-rx"}:
+        raise ValueError(
+            "sig_gen_1.tx_mode is only supported for device_type "
+            "'hendrix_tx' or 'wireless-pro-rx'"
+        )
     if ctx_raw is not None and device_type not in {"hendrix_tx", "hendrix_rx"}:
         raise ValueError(
             "sig_gen_1.ctx is only supported for device_type 'hendrix_tx' or 'hendrix_rx'"
         )
+    if device_type == "hendrix_tx":
+        tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
+    elif device_type == "wireless-pro-rx" and tx_mode_raw is not None:
+        tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
     if device_type in {"rxcc", "wireless-pro-rx"}:
         antenna_values = ensure_list(
@@ -185,8 +192,6 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
             }
         ]
         ctx_levels = normalize_hendrix_ctx_levels(ctx_raw if ctx_raw is not None else [1])
-        if device_type == "hendrix_tx":
-            tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
 
     return {
         "device_type": device_type,

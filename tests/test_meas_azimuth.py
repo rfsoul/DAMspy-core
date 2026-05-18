@@ -138,17 +138,29 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
                 }
             )
 
-    def test_resolve_sig_gen_sweep_config_rejects_tx_mode_for_non_hendrix_tx(self):
+    def test_resolve_sig_gen_sweep_config_rejects_tx_mode_for_unsupported_device(self):
         with self.assertRaisesRegex(ValueError, "tx_mode is only supported"):
             meas_azimuth.resolve_sig_gen_sweep_config(
                 {
-                    "device_type": "rxcc",
+                    "device_type": "hendrix_rx",
                     "channels": [0],
                     "power_levels": [10],
-                    "antennas": ["main"],
                     "tx_mode": "bodyworn",
                 }
             )
+
+    def test_wireless_pro_rx_accepts_tx_mode(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "wireless-pro-rx",
+                "wirepro_freq": [78],
+                "wirepro_power": [-4],
+                "antennas": ["main"],
+                "tx_mode": "bodyworn",
+            }
+        )
+
+        self.assertEqual(config["tx_mode"], "bodyworn")
 
     def test_wireless_pro_rx_uses_wirepro_sweep_fields(self):
         config = meas_azimuth.resolve_sig_gen_sweep_config(
