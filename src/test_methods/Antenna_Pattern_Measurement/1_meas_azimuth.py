@@ -1238,7 +1238,9 @@ def run(params, equip):
         current_ctx_level = None
         current_channel = None
         current_power_level = None
+        current_antenna = None
         bodyworn_rf_active = False
+        wireless_pro_rf_active = False
         current_battery_mv = None
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
@@ -1454,11 +1456,25 @@ def run(params, equip):
                                 ctx_change_required = (current_ctx_level != ctx_level)
                                 channel_change_required = (current_channel != channel)
                                 power_change_required = (current_power_level != power_level)
+                                antenna_change_required = (current_antenna != antenna)
                                 config_change_required = (
-                                    ctx_change_required
+                                    antenna_change_required
+                                    or ctx_change_required
                                     or channel_change_required
                                     or power_change_required
                                 )
+
+                                if (
+                                    device_type == "wireless-pro-rx"
+                                    and wireless_pro_rf_active
+                                    and config_change_required
+                                ):
+                                    print(
+                                        "[TX] Stopping WIRELESS-PRO-RX RF before "
+                                        "reconfiguring sweep variant"
+                                    )
+                                    sg.rf_off()
+                                    wireless_pro_rf_active = False
 
                                 if is_bodyworn_hendrix_tx and config_change_required:
                                     prompt_bodyworn_tx_in_cradle(
@@ -1529,6 +1545,7 @@ def run(params, equip):
                                 current_ctx_level = ctx_level
                                 current_channel = channel
                                 current_power_level = power_level
+                                current_antenna = antenna
 
                                 # Configure analyser
                                 print("\n[SA] Configuring spectrum analyser (narrowband mode)")
@@ -1571,6 +1588,8 @@ def run(params, equip):
                                 else:
                                     print(f"[TX] Starting {device_type.upper()} RF")
                                     sg.rf_on()
+                                    if device_type == "wireless-pro-rx":
+                                        wireless_pro_rf_active = True
                                     battery_mv = capture_hendrix_tx_battery_mv(
                                         sg=sg,
                                         device_type=device_type,
@@ -1653,6 +1672,10 @@ def run(params, equip):
                 print("[TX] Stopping HENDRIX_TX RF before shutdown")
                 sg.rf_off()
                 bodyworn_rf_active = False
+            if device_type == "wireless-pro-rx" and wireless_pro_rf_active:
+                print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
+                sg.rf_off()
+                wireless_pro_rf_active = False
             sg.close()
         except Exception as e:
             if use_woym:
