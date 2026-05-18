@@ -134,6 +134,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     orientations = first_params.get("orientations", [])
     polarisations = first_params.get("polarisation", [])
     step_deg = first_params.get("step_deg", "unknown")
+    max_angle_deg = first_params.get("max_angle_deg")
 
     sg_cfg = first_params.get("sig_gen_1", {})
     channels = sg_cfg.get("channels", [])
@@ -158,6 +159,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
         list_token("Ch", channels),
         list_token("Pwr", power_levels),
         list_token("Pol", polarisations),
+        list_token("MaxA", max_angle_deg),
         f"Step_{sanitize_windows_path(step_deg)}deg",
         f"RxAnt_{sanitize_windows_path(rx_antenna)}",
     ]

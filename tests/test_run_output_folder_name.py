@@ -101,6 +101,48 @@ class RunOutputFolderNameTests(unittest.TestCase):
         self.assertIn("DUT_123", folder)
         self.assertNotIn("DUT__123", folder)
 
+    def test_max_angle_is_included_in_foldername(self):
+        params = {
+            "DUT_product": "DUT",
+            "DUT_serial_number": "123",
+            "foldername_comment": "",
+            "orientations": [],
+            "polarisation": [],
+            "max_angle_deg": 170,
+            "step_deg": 10,
+            "sig_gen_1": {"channels": [], "power_levels": []},
+            "rx_path": {"antenna": "main"},
+        }
+
+        folder = run_module.build_output_folder_name(
+            "Antenna_Pattern_Measurement",
+            "2026-04-09_12-00-00",
+            params,
+        )
+
+        self.assertIn("MaxA_170", folder)
+
+    def test_max_angle_list_is_included_in_foldername(self):
+        params = {
+            "DUT_product": "DUT",
+            "DUT_serial_number": "123",
+            "foldername_comment": "",
+            "orientations": [],
+            "polarisation": [],
+            "max_angle_deg": [10, 30, 50],
+            "step_deg": 10,
+            "sig_gen_1": {"channels": [], "power_levels": []},
+            "rx_path": {"antenna": "main"},
+        }
+
+        folder = run_module.build_output_folder_name(
+            "Antenna_Pattern_Measurement",
+            "2026-04-09_12-00-00",
+            params,
+        )
+
+        self.assertIn("MaxA_10_30_50", folder)
+
 
 if __name__ == "__main__":
     unittest.main()

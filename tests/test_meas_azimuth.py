@@ -639,6 +639,44 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 2)
         self.assertEqual([call["antenna"] for call in sweep_calls], ["main", "secondary"])
+        self.assertTrue(all("wfreq-" in call["combo_dir"] for call in sweep_calls))
+        self.assertTrue(all("maxa-" in call["combo_dir"] for call in sweep_calls))
+
+    def test_run_supports_multiple_max_angle_sweeps(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main", "secondary"],
+                },
+            )
+            params["max_angle_deg"] = [10, 30]
+
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(
+            [(call["antenna"], call["maxa"]) for call in sweep_calls],
+            [("main", 10.0), ("main", 30.0), ("secondary", 10.0), ("secondary", 30.0)],
+        )
+        self.assertTrue(
+            all("maxa-" in call["combo_dir"] for call in sweep_calls)
+        )
+        self.assertTrue(
+            all("wfreq-" in call["combo_dir"] for call in sweep_calls)
+        )
 
 
 if __name__ == "__main__":
