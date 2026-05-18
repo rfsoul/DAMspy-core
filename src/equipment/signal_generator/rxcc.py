@@ -14,12 +14,12 @@ class RXCC(SignalGeneratorBase):
     """
     Rpicontrol-backed signal-generator adapter.
 
-    Per-device unified command examples:
-        curl -X POST http://<pi-ip>:8000/api/devices/rxcc/commands/start-rf \
+    Unified RF command examples:
+        curl -X POST http://<pi-ip>:8000/api/rf/start \
           -H "Content-Type: application/json" \
-          -d '{"antenna": "main", "channel": 0, "power": 10}'
+          -d '{"device": "rxcc", "antenna": "main", "channel": 0, "power": 10}'
 
-        curl -X POST http://<pi-ip>:8000/api/devices/tx/commands/stop-rf \
+        curl -X POST http://<pi-ip>:8000/api/rf/stop \
           -H "Content-Type: application/json" \
           -d '{}'
 
@@ -59,23 +59,13 @@ class RXCC(SignalGeneratorBase):
     VALID_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
     VALID_ANTENNAS = {"main", "secondary"}
     VALID_CTX_LEVELS = {"high", "low"}
-    COMMAND_PATHS = {
-        "rxcc": {
-            "start": "/api/devices/rxcc/commands/start-rf",
-            "stop": "/api/devices/rxcc/commands/stop-rf",
-        },
-        "hendrix_tx": {
-            "start": "/api/devices/tx/commands/start-rf",
-            "stop": "/api/devices/tx/commands/stop-rf",
-        },
-        "hendrix_rx": {
-            "start": "/api/devices/rx/commands/start-rf",
-            "stop": "/api/devices/rx/commands/stop-rf",
-        },
-        "wireless-pro-rx": {
-            "start": "/api/devices/wireless-pro-rx/commands/start-rf",
-            "stop": "/api/devices/wireless-pro-rx/commands/stop-rf",
-        },
+    RF_START_PATH = "/api/rf/start"
+    RF_STOP_PATH = "/api/rf/stop"
+    API_DEVICE_NAMES = {
+        "rxcc": "rxcc",
+        "hendrix_tx": "tx",
+        "hendrix_rx": "rx",
+        "wireless-pro-rx": "wireless-pro-rx",
     }
     CTX_PATHS = {
         "hendrix_tx": {
@@ -262,7 +252,7 @@ class RXCC(SignalGeneratorBase):
         self._apply_hendrix_ctx()
         self._request_json(
             "POST",
-            self.COMMAND_PATHS[self._device_type]["start"],
+            self.RF_START_PATH,
             payload=self._build_start_payload(),
         )
         self._rf_on = True
@@ -274,8 +264,8 @@ class RXCC(SignalGeneratorBase):
         self.ensure_open()
         self._request_json(
             "POST",
-            self.COMMAND_PATHS[self._device_type]["stop"],
-            payload={},
+            self.RF_STOP_PATH,
+            payload={"device": self.API_DEVICE_NAMES[self._device_type]},
         )
         self._rf_on = False
 
@@ -354,18 +344,26 @@ class RXCC(SignalGeneratorBase):
     # Internal helpers
     # ------------------------------------------------------------------
     def _build_start_payload(self) -> Dict[str, Any]:
-        if self._device_type == "wireless-pro-rx":
-            return {
-                "device": "wireless-pro-rx",
-                "antenna": self._antenna,
-                "wirepro_freq": self._wirepro_freq,
-                "wirepro_power": self._wirepro_power,
-            }
-
         payload = {
-            "channel": self._channel,
-            "power": self._power_level,
+            "device": self.API_DEVICE_NAMES[self._device_type],
         }
+
+        if self._device_type == "wireless-pro-rx":
+            payload.update(
+                {
+                    "antenna": self._antenna,
+                    "wirepro_freq": self._wirepro_freq,
+                    "wirepro_power": self._wirepro_power,
+                }
+            )
+            return payload
+
+        payload.update(
+            {
+                "channel": self._channel,
+                "power": self._power_level,
+            }
+        )
         if self._device_type == "rxcc":
             payload["antenna"] = self._antenna
         return payload

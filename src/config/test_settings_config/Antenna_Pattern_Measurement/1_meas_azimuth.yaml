@@ -43,10 +43,10 @@ sig_gen_1:  # rode rxcc device
   wirepro_freq: [50]
   #power_levels: [10]
   wirepro_power: [4]
-  CTX: [1,0]
+  #CTX: [1,0]   #not for wirepro
   # wirepro_freq: [78]  # Wireless Pro RX only: 2400 MHz + this MHz value
   # wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
-  #antennas: ["main", "secondary"]
+  antennas: ["main", "secondary"]
 
 rx_path:
   antenna: "Horn WR340"   # receive antenna into spectrum analyser

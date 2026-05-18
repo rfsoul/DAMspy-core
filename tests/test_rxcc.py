@@ -106,7 +106,7 @@ class RXCCTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CTX"):
             driver.set_ctx(2)
 
-    def test_rxcc_start_uses_unified_per_device_path_and_payload(self):
+    def test_rxcc_start_uses_integrated_rf_start_path_and_payload(self):
         driver = self.make_driver()
         driver.set_device_type("rxcc")
         driver.set_channel(17)
@@ -117,13 +117,13 @@ class RXCCTests(unittest.TestCase):
 
         self.assertEqual(
             captured["url"],
-            "http://example.test:8000/api/devices/rxcc/commands/start-rf",
+            "http://example.test:8000/api/rf/start",
         )
         self.assertEqual(captured["method"], "POST")
         self.assertEqual(captured["timeout"], driver.timeout)
         self.assertEqual(
             captured["payload"],
-            {"antenna": "secondary", "channel": 17, "power": 6},
+            {"device": "rxcc", "antenna": "secondary", "channel": 17, "power": 6},
         )
         self.assertTrue(driver.rf_enabled)
 
@@ -140,7 +140,7 @@ class RXCCTests(unittest.TestCase):
 
         self.assertEqual(
             captured["url"],
-            "http://example.test:8000/api/devices/wireless-pro-rx/commands/start-rf",
+            "http://example.test:8000/api/rf/start",
         )
         self.assertEqual(
             captured["payload"],
@@ -151,6 +151,28 @@ class RXCCTests(unittest.TestCase):
                 "wirepro_power": -4.0,
             },
         )
+
+    def test_wireless_pro_rx_stop_uses_integrated_rf_stop_path(self):
+        driver = self.make_driver()
+        driver.set_device_type("wireless-pro-rx")
+
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            captured["method"] = req.get_method()
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse('{"status":"ok"}')
+
+        with patch("equipment.signal_generator.rxcc.request.urlopen", side_effect=fake_urlopen):
+            driver.rf_off()
+
+        self.assertEqual(
+            captured["url"],
+            "http://example.test:8000/api/rf/stop",
+        )
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["payload"], {"device": "wireless-pro-rx"})
 
     def test_hendrix_tx_start_posts_ctx_high_before_rf_start_by_default(self):
         driver = self.make_driver()
@@ -170,10 +192,10 @@ class RXCCTests(unittest.TestCase):
                     "payload": None,
                 },
                 {
-                    "url": "http://example.test:8000/api/devices/tx/commands/start-rf",
+                    "url": "http://example.test:8000/api/rf/start",
                     "method": "POST",
                     "timeout": driver.timeout,
-                    "payload": {"channel": 17, "power": 6},
+                    "payload": {"device": "tx", "channel": 17, "power": 6},
                 },
             ],
         )
@@ -191,9 +213,9 @@ class RXCCTests(unittest.TestCase):
         self.assertEqual(captured[0]["payload"], None)
         self.assertEqual(
             captured[1]["url"],
-            "http://example.test:8000/api/devices/tx/commands/start-rf",
+            "http://example.test:8000/api/rf/start",
         )
-        self.assertEqual(captured[1]["payload"], {"channel": 17, "power": 6})
+        self.assertEqual(captured[1]["payload"], {"device": "tx", "channel": 17, "power": 6})
 
     def test_hendrix_rx_start_posts_ctx_high_before_rf_start_by_default(self):
         driver = self.make_driver()
@@ -213,15 +235,15 @@ class RXCCTests(unittest.TestCase):
                     "payload": None,
                 },
                 {
-                    "url": "http://example.test:8000/api/devices/rx/commands/start-rf",
+                    "url": "http://example.test:8000/api/rf/start",
                     "method": "POST",
                     "timeout": driver.timeout,
-                    "payload": {"channel": 17, "power": 6},
+                    "payload": {"device": "rx", "channel": 17, "power": 6},
                 },
             ],
         )
 
-    def test_rxcc_stop_uses_unified_per_device_path(self):
+    def test_rxcc_stop_uses_integrated_rf_stop_path(self):
         driver = self.make_driver()
         driver.set_device_type("rxcc")
 
@@ -238,13 +260,13 @@ class RXCCTests(unittest.TestCase):
 
         self.assertEqual(
             captured["url"],
-            "http://example.test:8000/api/devices/rxcc/commands/stop-rf",
+            "http://example.test:8000/api/rf/stop",
         )
         self.assertEqual(captured["method"], "POST")
-        self.assertEqual(captured["payload"], {})
+        self.assertEqual(captured["payload"], {"device": "rxcc"})
         self.assertFalse(driver.rf_enabled)
 
-    def test_hendrix_tx_stop_uses_unified_per_device_path(self):
+    def test_hendrix_tx_stop_uses_integrated_rf_stop_path(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_tx")
 
@@ -260,11 +282,11 @@ class RXCCTests(unittest.TestCase):
 
         self.assertEqual(
             captured["url"],
-            "http://example.test:8000/api/devices/tx/commands/stop-rf",
+            "http://example.test:8000/api/rf/stop",
         )
-        self.assertEqual(captured["payload"], {})
+        self.assertEqual(captured["payload"], {"device": "tx"})
 
-    def test_hendrix_rx_stop_uses_unified_per_device_path(self):
+    def test_hendrix_rx_stop_uses_integrated_rf_stop_path(self):
         driver = self.make_driver()
         driver.set_device_type("hendrix_rx")
 
@@ -280,9 +302,9 @@ class RXCCTests(unittest.TestCase):
 
         self.assertEqual(
             captured["url"],
-            "http://example.test:8000/api/devices/rx/commands/stop-rf",
+            "http://example.test:8000/api/rf/stop",
         )
-        self.assertEqual(captured["payload"], {})
+        self.assertEqual(captured["payload"], {"device": "rx"})
 
     def test_hendrix_tx_battery_info_calls_http_endpoint(self):
         driver = self.make_driver()
