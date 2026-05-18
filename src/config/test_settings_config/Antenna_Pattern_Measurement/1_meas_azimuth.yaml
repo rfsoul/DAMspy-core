@@ -1,7 +1,7 @@
 DUT_product: "Hendrix-Tx"
 DUT_hardware_config: "V3-04F"
 DUT_serial_number: "002"
-foldername_comment: "bodyworn_corrected_CTX"
+foldername_comment: "bodyworn_USB_attached"
 yaml_comment: ""
 orientations: [ori1]  # [ori1, ori2]
 orientation_photo_location: "C:/Git/DAMspy-core/src/DAMspy_logs/orientations/hendrix_tx"
@@ -35,12 +35,14 @@ dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
-  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
+  device_type: "wireless-pro-rx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
-  tx_power: 18 #in dBm
-  channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
-  power_levels: [10]
+  tx_power: 14 #in dBm
+  #channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
+  wirepro_freq: [50]
+  #power_levels: [10]
+  wirepro_power: [4]
   CTX: [1,0]
   # wirepro_freq: [78]  # Wireless Pro RX only: 2400 MHz + this MHz value
   # wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
