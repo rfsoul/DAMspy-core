@@ -678,6 +678,87 @@ class MeasAzimuthRunTests(unittest.TestCase):
             all("wfreq-" in call["combo_dir"] for call in sweep_calls)
         )
 
+    def test_run_only_prompts_manual_setup_once_when_orientation_and_polarisation_stay_fixed(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main", "secondary"],
+                },
+            )
+            params["max_angle_deg"] = [10, 30]
+            params["orientations"] = ["ori2"]
+            params["polarisation"] = ["V"]
+
+            with mock.patch.object(
+                meas_azimuth,
+                "prompt_manual_change",
+            ) as prompt_manual_change, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(
+            [call.args[0] for call in prompt_manual_change.call_args_list],
+            [
+                "Set the DUT orientation to 'ori2'.",
+                "Set the manual test setup to polarisation 'V'.",
+            ],
+        )
+        self.assertEqual(len(sweep_calls), 4)
+
+    def test_run_prompts_manual_setup_again_when_orientation_or_polarisation_changes(self):
+        equip = _FakeEquipment()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main"],
+                },
+            )
+            params["orientations"] = ["ori2", "ori2", "ori3"]
+            params["polarisation"] = ["V", "V", "H"]
+
+            with mock.patch.object(
+                meas_azimuth,
+                "prompt_manual_change",
+            ) as prompt_manual_change, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: None,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(
+            [call.args[0] for call in prompt_manual_change.call_args_list],
+            [
+                "Set the DUT orientation to 'ori2'.",
+                "Set the manual test setup to polarisation 'V'.",
+                "Set the manual test setup to polarisation 'H'.",
+                "Set the manual test setup to polarisation 'V'.",
+                "Set the manual test setup to polarisation 'H'.",
+                "Set the DUT orientation to 'ori3'.",
+                "Set the manual test setup to polarisation 'V'.",
+                "Set the manual test setup to polarisation 'H'.",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

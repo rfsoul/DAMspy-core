@@ -1264,12 +1264,15 @@ def run(params, equip):
         bodyworn_rf_active = False
         wireless_pro_rf_active = False
         current_battery_mv = None
+        confirmed_orientation = None
+        confirmed_polarisation = None
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
 
         for orientation in orientations:
-            if use_woym:
+            orientation_change_required = confirmed_orientation != orientation
+            if use_woym and orientation_change_required:
                 update_woym_generic(
                     run_woym_path=run_woym_path,
                     latest_woym_path=latest_woym_path,
@@ -1283,12 +1286,17 @@ def run(params, equip):
                     event=f"Awaiting DUT orientation change: {orientation}",
                 )
 
-            prompt_manual_change(
-                f"Set the DUT orientation to '{orientation}'."
-            )
+            if orientation_change_required:
+                prompt_manual_change(
+                    f"Set the DUT orientation to '{orientation}'."
+                )
+                confirmed_orientation = orientation
+            else:
+                print(f"[MANUAL] DUT orientation already confirmed as '{orientation}', continuing.")
 
             for pol in polarisations:
-                if use_woym:
+                polarisation_change_required = confirmed_polarisation != pol
+                if use_woym and polarisation_change_required:
                     update_woym_generic(
                         run_woym_path=run_woym_path,
                         latest_woym_path=latest_woym_path,
@@ -1302,9 +1310,13 @@ def run(params, equip):
                         event=f"Awaiting polarisation change: {pol}",
                     )
 
-                prompt_manual_change(
-                    f"Set the manual test setup to polarisation '{pol}'."
-                )
+                if polarisation_change_required:
+                    prompt_manual_change(
+                        f"Set the manual test setup to polarisation '{pol}'."
+                    )
+                    confirmed_polarisation = pol
+                else:
+                    print(f"[MANUAL] Polarisation already confirmed as '{pol}', continuing.")
 
                 for antenna_cfg in antenna_variants:
                     antenna = antenna_cfg["value"]
