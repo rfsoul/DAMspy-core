@@ -283,7 +283,7 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
 
 
 class _FakeSignalGenerator:
-    def __init__(self, event_log=None, battery_mv=3810):
+    def __init__(self, event_log=None, battery_mv=3810, rf_off_error=None):
         self.open_calls = 0
         self.close_calls = 0
         self.device_types = []
@@ -298,6 +298,7 @@ class _FakeSignalGenerator:
         self.read_battery_info_calls = 0
         self.event_log = event_log if event_log is not None else []
         self.battery_mv = battery_mv
+        self.rf_off_error = rf_off_error
 
     def open(self):
         self.open_calls += 1
@@ -338,6 +339,8 @@ class _FakeSignalGenerator:
     def rf_off(self):
         self.rf_off_calls += 1
         self.event_log.append("rf_off")
+        if self.rf_off_error is not None:
+            raise self.rf_off_error
 
     def read_battery_info(self):
         self.read_battery_info_calls += 1
@@ -371,10 +374,13 @@ class _FakePositioner:
 
 
 class _FakeEquipment:
-    def __init__(self, event_log=None):
+    def __init__(self, event_log=None, rf_off_error=None):
         self.positioner = _FakePositioner()
         self.spectrum_analyser = _FakeSpectrumAnalyser()
-        self.signal_generator = _FakeSignalGenerator(event_log=event_log)
+        self.signal_generator = _FakeSignalGenerator(
+            event_log=event_log,
+            rf_off_error=rf_off_error,
+        )
 
 
 class MeasAzimuthRunTests(unittest.TestCase):
@@ -575,6 +581,61 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.channels, [])
         self.assertEqual(equip.signal_generator.power_levels, [])
         self.assertEqual(equip.spectrum_analyser.calls[0]["center_hz"], 2_478_000_000)
+
+    def test_run_wireless_pro_rx_keeps_rf_active_across_frequency_changes(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78, 79],
+                    "wirepro_power": [-4],
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.device_types, ["wireless-pro-rx"])
+        self.assertEqual(equip.signal_generator.wirepro_freqs, [78, 79])
+        self.assertEqual(equip.signal_generator.wirepro_powers, [-4])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
+        self.assertEqual([call["channel"] for call in sweep_calls], [78, 79])
+
+    def test_run_wireless_pro_rx_stop_failure_after_sweep_is_non_fatal(self):
+        equip = _FakeEquipment(rf_off_error=RuntimeError("stop failed"))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: None,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
 
 
 if __name__ == "__main__":

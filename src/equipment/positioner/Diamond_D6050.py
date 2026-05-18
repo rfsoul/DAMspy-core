@@ -79,7 +79,7 @@ class DiamondD6050:
         if initial is None:
             initial = 0.0
 
-        self._vprint("[POS] Waiting for motion to begin…")
+        self._vprint("[POS] Waiting for motion to begin...")
 
         for _ in range(25):  # ~5 seconds
             time.sleep(0.2)
@@ -97,7 +97,7 @@ class DiamondD6050:
     # Wait for motion stop
     # -----------------------------------------------------------
     def wait_until_stopped(self):
-        self._vprint("[POS] Monitoring movement via encoder…")
+        self._vprint("[POS] Monitoring movement via encoder...")
 
         last = None
         stable = 0
@@ -105,19 +105,19 @@ class DiamondD6050:
         while True:
             ang = self.get_current_az_deg()
             if ang is None:
-                self._vprint("[POS] Encoder read failed, retrying…")
+                self._vprint("[POS] Encoder read failed, retrying...")
                 time.sleep(0.2)
                 continue
 
             if self.verbose_logging:
                 steps = int(-ang * self.az_steps_per_deg)  # invert back for raw display
-                print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f}°)")
+                print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f} deg)")
 
             if last is not None:
                 if abs(ang - last) < 0.2:
                     stable += 1
                     if stable >= 6:
-                        self._vprint(f"[POS] Movement stopped at {ang:+.2f}°")
+                        self._vprint(f"[POS] Movement stopped at {ang:+.2f} deg")
                         return ang
                 else:
                     stable = 0
@@ -129,14 +129,14 @@ class DiamondD6050:
     # Azimuth move (relative)
     # -----------------------------------------------------------
     def go_azimuth(self, deg):
-        # steps unchanged – sign convention handled in angle read
+        # steps unchanged - sign convention handled in angle read
         steps = int(round(deg * self.az_steps_per_deg))
         cmd = f"{self.az_axis}0RN{steps:+d}"
-        print(f"[DiamondD6050] AZ MOVE {deg:+.2f}° -> {cmd}")
+        print(f"[DiamondD6050] AZ MOVE {deg:+.2f} deg -> {cmd}")
 
         self._send(cmd)
         self._wait_for_motion_start()
         final = self.wait_until_stopped()
 
-        print(f"[DiamondD6050] AZ MOVE complete at {final:+.2f}°")
+        print(f"[DiamondD6050] AZ MOVE complete at {final:+.2f} deg")
         return True

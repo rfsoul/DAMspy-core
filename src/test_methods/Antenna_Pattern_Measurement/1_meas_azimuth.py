@@ -28,6 +28,15 @@ NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
 
+def format_angle(value, decimals: int = 1, signed: bool = True) -> str:
+    sign = "+" if signed else ""
+    return f"{value:{sign}.{decimals}f} deg"
+
+
+def format_symmetric_angle(value, decimals: int = 1) -> str:
+    return f"+/-{value:.{decimals}f} deg"
+
+
 def meta_write(path, meta: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -669,7 +678,7 @@ def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
     plt.savefig(out_png)
     plt.close()
 
-    print(f"[PLOT] Updated partial polar plot â†’ {out_png}")
+    print(f"[PLOT] Updated partial polar plot -> {out_png}")
 
 
 def run_single_azimuth_sweep(
@@ -723,7 +732,7 @@ def run_single_azimuth_sweep(
         if boresight_only:
             return
         if abs(delta_deg) < 1e-9:
-            print("[POS] Zero move requested â€“ skipping")
+            print("[POS] Zero move requested - skipping")
             return
 
         target = current_az + delta_deg
@@ -737,7 +746,10 @@ def run_single_azimuth_sweep(
                 status="running",
                 current_state={
                     "state": "moving",
-                    "message": f"Moving azimuth from {current_az:+.1f}Â° to {target:+.1f}Â°",
+                    "message": (
+                        f"Moving azimuth from {format_angle(current_az)} "
+                        f"to {format_angle(target)}"
+                    ),
                     "target": {
                         "azimuth_deg": target,
                     },
@@ -763,13 +775,13 @@ def run_single_azimuth_sweep(
                     "latest_metadata_path": meta_path,
                     "combo_dir": combo_dir,
                 },
-                event=f"Moving azimuth to {target:+.1f}Â°",
+                event=f"Moving azimuth to {format_angle(target)}",
             )
 
         print(
             f"[POS] Commanding AZ move: "
-            f"{current_az:+.1f}Â° â†’ {target:+.1f}Â° "
-            f"(Î” {delta_deg:+.1f}Â°)"
+            f"{format_angle(current_az)} -> {format_angle(target)} "
+            f"(delta {format_angle(delta_deg)})"
         )
         pos.go_azimuth(delta_deg)
         current_az = target
@@ -784,7 +796,7 @@ def run_single_azimuth_sweep(
         print("[SWEEP] BEGIN AZIMUTH PATTERN SWEEP")
         print("----------------------------------------------------\n")
 
-        print("[POS] Software azimuth reference set to 0Â°")
+        print("[POS] Software azimuth reference set to 0 deg")
         current_az = 0.0
         if boresight_only:
             print("[MODE] Boresight-only capture: positioner movement disabled")
@@ -848,18 +860,18 @@ def run_single_azimuth_sweep(
                 ),
             )
 
-        print(f"\n[POS] Pre-positioning to +{maxa:.1f}Â° (no RF capture)")
+        print(f"\n[POS] Pre-positioning to {format_angle(maxa)} (no RF capture)")
         move_rel(+maxa)
 
-        print("\n[SWEEP] Measurement phase: +max â†’ 0 â†’ -max\n")
+        print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
         print(f"[SWEEP] Total points: {total_points}")
-        print(f"[PLOT] Live plot update threshold: {plot_every_deg:.1f}Â°")
+        print(f"[PLOT] Live plot update threshold: {format_angle(plot_every_deg, signed=False)}")
 
         for idx in range(total_points):
             az = current_az
 
             print("\n----------------------------------------------------")
-            print(f"[POINT {idx+1:03d}] AZIMUTH = {az:+.1f}Â°")
+            print(f"[POINT {idx+1:03d}] AZIMUTH = {format_angle(az)}")
             print("----------------------------------------------------")
 
             if use_woym:
@@ -868,7 +880,7 @@ def run_single_azimuth_sweep(
                     latest_woym_path=latest_woym_path,
                     current_state={
                         "state": "measuring",
-                        "message": f"Measuring azimuth point at {az:+.1f}Â°",
+                        "message": f"Measuring azimuth point at {format_angle(az)}",
                         "target": {
                             "azimuth_deg": az,
                         },
@@ -894,7 +906,7 @@ def run_single_azimuth_sweep(
                         "latest_metadata_path": meta_path,
                         "combo_dir": combo_dir,
                     },
-                    event=f"Measuring point {idx + 1}/{total_points} at {az:+.1f}Â°",
+                    event=f"Measuring point {idx + 1}/{total_points} at {format_angle(az)}",
                 )
 
             print("[SA] Arming per-point MAX HOLD capture")
@@ -919,7 +931,7 @@ def run_single_azimuth_sweep(
             f.flush()
 
             print(
-                f"[DATA] az {az:+6.1f}Â° | "
+                f"[DATA] az {format_angle(az):>10} | "
                 f"RX = {rx_dbm:7.2f} dBm | "
                 f"Fpk = {pk_f_hz/1e6:.6f} MHz"
             )
@@ -968,7 +980,7 @@ def run_single_azimuth_sweep(
                         "combo_dir": combo_dir,
                     },
                     event=(
-                        f"Measured az {az:+.1f}Â° "
+                        f"Measured az {format_angle(az)} "
                         f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
                     ),
                 )
@@ -1000,7 +1012,7 @@ def run_single_azimuth_sweep(
                         latest_woym_path=latest_woym_path,
                         current_state={
                             "state": "plotting",
-                            "message": f"Updating live plot at {az:+.1f}Â°",
+                            "message": f"Updating live plot at {format_angle(az)}",
                             "target": {
                                 "azimuth_deg": az,
                             },
@@ -1011,20 +1023,20 @@ def run_single_azimuth_sweep(
                             "latest_metadata_path": meta_path,
                             "combo_dir": combo_dir,
                         },
-                        event=f"Updating live plot at {az:+.1f}Â°",
+                        event=f"Updating live plot at {format_angle(az)}",
                     )
                 write_partial_polar_plot(csv_path, plot_png_path)
                 last_plot_az = az
 
             if az > -maxa:
-                print(f"[POS] Advancing to next azimuth step (-{step:.1f}Â°)")
+                print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
                 move_rel(-step)
 
-        print("\n[POS] Sweep complete â€“ returning to start position")
+        print("\n[POS] Sweep complete - returning to start position")
         move_rel(+maxa)
 
         current_az = 0.0
-        print("[POS] Software azimuth reset to 0Â°")
+        print("[POS] Software azimuth reset to 0 deg")
 
         if use_woym:
             update_woym_generic(
@@ -1166,13 +1178,13 @@ def run(params, equip):
         )
     print(f"      Orientations       : {orientations}")
     print(f"      Polarisations      : {polarisations}")
-    print(f"      Boresight (logical): {bore:.1f}Â°")
-    print(f"      Max angle          : Â±{maxa:.1f}Â°")
-    print(f"      Step size          : {step:.1f}Â°")
+    print(f"      Boresight (logical): {format_angle(bore, signed=False)}")
+    print(f"      Max angle          : {format_symmetric_angle(maxa)}")
+    print(f"      Step size          : {format_angle(step, signed=False)}")
     print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
-    print(f"      Live plot every    : {plot_every_deg:.1f}Â°")
+    print(f"      Live plot every    : {format_angle(plot_every_deg, signed=False)}")
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      {frequency_label:<18} : {channels}")
     print(f"      {power_label:<18} : {power_levels}")
@@ -1370,9 +1382,9 @@ def run(params, equip):
                                 }
 
                                 meta_write(meta_path, combo_meta)
-                                print(f"[META] Written â†’ {meta_path}")
-                                print(f"[OUT]  CSV output  â†’ {csv_path}")
-                                print(f"[OUT]  Plot output â†’ {plot_png_path}")
+                                print(f"[META] Written -> {meta_path}")
+                                print(f"[OUT]  CSV output  -> {csv_path}")
+                                print(f"[OUT]  Plot output -> {plot_png_path}")
 
                                 if use_woym:
                                     update_woym_generic(
@@ -1628,7 +1640,7 @@ def run(params, equip):
                                         )
                                     raise
                                 finally:
-                                    if not is_bodyworn_hendrix_tx:
+                                    if not is_bodyworn_hendrix_tx and device_type != "wireless-pro-rx":
                                         print(f"[TX] Stopping {device_type.upper()} RF")
                                         sg.rf_off()
 

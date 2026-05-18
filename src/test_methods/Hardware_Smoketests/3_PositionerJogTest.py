@@ -35,7 +35,7 @@ def run(equip_mgr, _unused, logger, test_config):
 
     pos = _pick_positioner(equip_mgr)
     if not pos:
-        _fail(logger, f"No 'positioner.{POS_KEY}' loaded — check location_config.")
+        _fail(logger, f"No 'positioner.{POS_KEY}' loaded - check location_config.")
         return False
 
     az_deg      = float(test_config.get("az_jog_deg", 5.0))
@@ -47,7 +47,7 @@ def run(equip_mgr, _unused, logger, test_config):
         if hasattr(pos, "open"):
             pos.open()
 
-        _log(logger, f"[3_PositionerJogTest] Jogging AZ={az_deg:+.2f}°, EL={el_deg:+.2f}°")
+        _log(logger, f"[3_PositionerJogTest] Jogging AZ={az_deg:+.2f} deg, EL={el_deg:+.2f} deg")
         pos.move_relative(az_deg=az_deg, el_deg=el_deg, obey_limits=obey_limits)
 
         time.sleep(settle_s)

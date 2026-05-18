@@ -70,7 +70,7 @@ def run(params, equip):
                 base = os.path.basename(src_path)
                 dest = os.path.join(outdir, base)
                 shutil.copy2(src_path, dest)
-                print(f"[INFO] Copied → {dest}")
+                print(f"[INFO] Copied -> {dest}")
             except Exception as e:
                 print(f"[WARN] Could not copy {src_path}: {e}")
         else:
@@ -82,7 +82,7 @@ def run(params, equip):
 
     # Start azimuth software angle
     current_az = 0.0
-    print(f"[SOFTABS] Initial software azimuth = {current_az}°")
+    print(f"[SOFTABS] Initial software azimuth = {current_az} deg")
 
     print("\n===================================================")
     print("        BEGIN EMISSIONS MEASUREMENT LOOP")
@@ -124,17 +124,17 @@ def run(params, equip):
                 for az_deg in az_list:
 
                     print("\n----------------------------------------------")
-                    print(f"[MEAS] Target AZ = {az_deg}°")
+                    print(f"[MEAS] Target AZ = {az_deg} deg")
                     print("----------------------------------------------")
 
                     delta = az_deg - current_az
                     if abs(delta) < 0.001:
-                        print(f"[POS] Already at {az_deg}°, skipping move.")
+                        print(f"[POS] Already at {az_deg} deg, skipping move.")
                     else:
-                        print(f"[POS] Moving from {current_az}° → {az_deg}° (delta {delta:+.2f}°)")
+                        print(f"[POS] Moving from {current_az} deg -> {az_deg} deg (delta {delta:+.2f} deg)")
                         pos.go_azimuth(delta)
                         current_az = az_deg
-                        print("[POS] Move complete. Settling…")
+                        print("[POS] Move complete. Settling...")
                         sleep(1.0)
 
                     # Folder name
@@ -157,15 +157,15 @@ def run(params, equip):
                     sleep(0.5)
 
                 # Return to zero
-                print(f"[POS] Finished POL {pol}, DIST {dist_m}m, HEIGHT {height_m}m. Returning to 0°…")
+                print(f"[POS] Finished POL {pol}, DIST {dist_m}m, HEIGHT {height_m}m. Returning to 0 deg...")
                 if abs(current_az) < 0.001:
-                    print("[POS] Already at 0°, skipping.")
+                    print("[POS] Already at 0 deg, skipping.")
                 else:
                     delta = -current_az
-                    print(f"[POS] Moving delta {delta:+.2f}° → 0°")
+                    print(f"[POS] Moving delta {delta:+.2f} deg -> 0 deg")
                     pos.go_azimuth(delta)
                     current_az = 0.0
-                    print("[POS] Returned to 0°")
+                    print("[POS] Returned to 0 deg")
 
     print("\n===================================================")
     print("        FINAL RETURN TO ZERO")
