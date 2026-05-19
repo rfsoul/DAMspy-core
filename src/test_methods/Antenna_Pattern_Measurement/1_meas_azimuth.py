@@ -64,6 +64,21 @@ def ensure_list(value, name: str):
     return [value]
 
 
+def coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    value_str = str(value).strip().lower()
+    if value_str in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value_str in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Cannot interpret {value!r} as boolean")
+
+
 def get_first_present(mapping: dict, keys):
     for key in keys:
         if key in mapping:
@@ -239,6 +254,24 @@ def prompt_manual_change(message: str) -> None:
     print("Press Enter when complete...")
     print("=" * 90)
     input()
+
+
+def prompt_wirepro_manual_setup(
+    *,
+    antenna_label,
+    wirepro_freq,
+    wirepro_power,
+    tx_freq,
+    reason,
+) -> None:
+    prompt_manual_change(
+        "Cannot communicate with Wireless Pro RX.\n"
+        f"Reason: {reason}\n"
+        f"Ensure antenna is set to '{antenna_label}', "
+        f"wirepro_freq is {wirepro_freq} ({tx_freq/1e6:.3f} MHz), "
+        f"wirepro_power is {wirepro_power}, and the RF signal is visible "
+        "on the spectrum analyser before continuing."
+    )
 
 
 def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
@@ -1152,6 +1185,10 @@ def run(params, equip):
     power_levels = sg_sweep_cfg["power_levels"]
     frequency_label = sg_sweep_cfg["frequency_label"]
     power_label = sg_sweep_cfg["power_label"]
+    wirepro_manual_fallback = coerce_bool(
+        sg_cfg.get("wirepro_manual_fallback"),
+        default=False,
+    )
     antenna_variants = sg_sweep_cfg["antennas"]
     antenna_labels = [item["label"] for item in antenna_variants]
 
@@ -1186,6 +1223,8 @@ def run(params, equip):
     print(f"      Device type        : {device_type}")
     if tx_mode is not None:
         print(f"      TX mode            : {tx_mode}")
+    if device_type == "wireless-pro-rx":
+        print(f"      WirePro fallback   : {wirepro_manual_fallback}")
     if ctx_levels and ctx_levels[0] is not None:
         print(
             "      CTX                : "
@@ -1263,12 +1302,32 @@ def run(params, equip):
         current_antenna = None
         bodyworn_rf_active = False
         wireless_pro_rf_active = False
+        wirepro_manual_mode = False
         current_battery_mv = None
         confirmed_orientation = None
         confirmed_polarisation = None
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
+
+        def activate_wirepro_manual_mode(*, antenna_label, channel, power_level, tx_freq, reason):
+            nonlocal wirepro_manual_mode
+            nonlocal wireless_pro_rf_active
+
+            if device_type != "wireless-pro-rx" or not wirepro_manual_fallback:
+                return False
+
+            print(f"[WARN] Wireless Pro RX automatic control failed: {reason}")
+            prompt_wirepro_manual_setup(
+                antenna_label=antenna_label,
+                wirepro_freq=channel,
+                wirepro_power=power_level,
+                tx_freq=tx_freq,
+                reason=reason,
+            )
+            wirepro_manual_mode = True
+            wireless_pro_rf_active = True
+            return True
 
         for orientation in orientations:
             orientation_change_required = confirmed_orientation != orientation
@@ -1491,13 +1550,10 @@ def run(params, equip):
                                             ),
                                         )
 
-                                    if antenna is not None:
-                                        sg.set_antenna(antenna)
-
+                                    antenna_change_required = current_antenna != antenna
                                     ctx_change_required = current_ctx_level != ctx_level
                                     channel_change_required = current_channel != channel
                                     power_change_required = current_power_level != power_level
-                                    antenna_change_required = current_antenna != antenna
                                     config_change_required = (
                                         antenna_change_required
                                         or ctx_change_required
@@ -1505,17 +1561,79 @@ def run(params, equip):
                                         or power_change_required
                                     )
 
-                                    if (
-                                        device_type == "wireless-pro-rx"
-                                        and wireless_pro_rf_active
-                                        and config_change_required
-                                    ):
-                                        print(
-                                            "[TX] Stopping WIRELESS-PRO-RX RF before "
-                                            "reconfiguring sweep variant"
-                                        )
-                                        sg.rf_off()
-                                        wireless_pro_rf_active = False
+                                    if device_type == "wireless-pro-rx" and wirepro_manual_mode:
+                                        if config_change_required:
+                                            print(
+                                                "[TX] WIRELESS-PRO-RX manual mode active; "
+                                                "manual confirmation required for changed sweep settings"
+                                            )
+                                            activate_wirepro_manual_mode(
+                                                antenna_label=antenna_label,
+                                                channel=channel,
+                                                power_level=power_level,
+                                                tx_freq=tx_freq,
+                                                reason=(
+                                                    "Automatic WirePro control is disabled for this run. "
+                                                    "Confirm the requested settings manually."
+                                                ),
+                                            )
+                                    else:
+                                        if (
+                                            device_type == "wireless-pro-rx"
+                                            and wireless_pro_rf_active
+                                            and config_change_required
+                                        ):
+                                            print(
+                                                "[TX] Stopping WIRELESS-PRO-RX RF before "
+                                                "reconfiguring sweep variant"
+                                            )
+                                            try:
+                                                sg.rf_off()
+                                                wireless_pro_rf_active = False
+                                            except Exception as e:
+                                                if not activate_wirepro_manual_mode(
+                                                    antenna_label=antenna_label,
+                                                    channel=channel,
+                                                    power_level=power_level,
+                                                    tx_freq=tx_freq,
+                                                    reason=str(e),
+                                                ):
+                                                    raise
+
+                                        if (
+                                            device_type == "wireless-pro-rx"
+                                            and not wirepro_manual_mode
+                                        ):
+                                            try:
+                                                if antenna is not None and antenna_change_required:
+                                                    sg.set_antenna(antenna)
+                                                if power_change_required:
+                                                    if hasattr(sg, "set_wirepro_power"):
+                                                        sg.set_wirepro_power(power_level)
+                                                    else:
+                                                        raise RuntimeError(
+                                                            "wireless-pro-rx requires a signal-generator driver "
+                                                            "that supports set_wirepro_power()"
+                                                        )
+                                                if channel_change_required:
+                                                    if hasattr(sg, "set_wirepro_freq"):
+                                                        sg.set_wirepro_freq(channel)
+                                                    else:
+                                                        raise RuntimeError(
+                                                            "wireless-pro-rx requires a signal-generator driver "
+                                                            "that supports set_wirepro_freq()"
+                                                        )
+                                            except Exception as e:
+                                                if not activate_wirepro_manual_mode(
+                                                    antenna_label=antenna_label,
+                                                    channel=channel,
+                                                    power_level=power_level,
+                                                    tx_freq=tx_freq,
+                                                    reason=str(e),
+                                                ):
+                                                    raise
+                                        elif antenna is not None and antenna_change_required:
+                                            sg.set_antenna(antenna)
 
                                     if is_bodyworn_hendrix_tx and config_change_required:
                                         prompt_bodyworn_tx_in_cradle(
@@ -1554,24 +1672,7 @@ def run(params, equip):
                                     if ctx_change_required and ctx_level is not None:
                                         print(f"[TX] Setting Hendrix CTX to {ctx_display}")
                                         sg.set_ctx(ctx_level)
-                                    if device_type == "wireless-pro-rx":
-                                        if power_change_required:
-                                            if hasattr(sg, "set_wirepro_power"):
-                                                sg.set_wirepro_power(power_level)
-                                            else:
-                                                raise RuntimeError(
-                                                    "wireless-pro-rx requires a signal-generator driver "
-                                                    "that supports set_wirepro_power()"
-                                                )
-                                        if channel_change_required:
-                                            if hasattr(sg, "set_wirepro_freq"):
-                                                sg.set_wirepro_freq(channel)
-                                            else:
-                                                raise RuntimeError(
-                                                    "wireless-pro-rx requires a signal-generator driver "
-                                                    "that supports set_wirepro_freq()"
-                                                )
-                                    else:
+                                    if device_type != "wireless-pro-rx":
                                         if power_change_required:
                                             sg.set_power_level(power_level)
                                         if channel_change_required:
@@ -1626,10 +1727,31 @@ def run(params, equip):
                                                 "awaiting cradle update before RF start"
                                             )
                                     else:
-                                        print(f"[TX] Starting {device_type.upper()} RF")
-                                        sg.rf_on()
-                                        if device_type == "wireless-pro-rx":
-                                            wireless_pro_rf_active = True
+                                        if device_type == "wireless-pro-rx" and wirepro_manual_mode:
+                                            print(
+                                                "[TX] WIRELESS-PRO-RX manual mode active; "
+                                                "assuming RF is already on for this sweep"
+                                            )
+                                        elif device_type == "wireless-pro-rx" and wireless_pro_rf_active:
+                                            print(
+                                                "[TX] WIRELESS-PRO-RX RF already on; "
+                                                "reusing current RF state for this sweep"
+                                            )
+                                        else:
+                                            print(f"[TX] Starting {device_type.upper()} RF")
+                                            try:
+                                                sg.rf_on()
+                                                if device_type == "wireless-pro-rx":
+                                                    wireless_pro_rf_active = True
+                                            except Exception as e:
+                                                if not activate_wirepro_manual_mode(
+                                                    antenna_label=antenna_label,
+                                                    channel=channel,
+                                                    power_level=power_level,
+                                                    tx_freq=tx_freq,
+                                                    reason=str(e),
+                                                ):
+                                                    raise
                                         battery_mv = capture_hendrix_tx_battery_mv(
                                             sg=sg,
                                             device_type=device_type,
@@ -1712,8 +1834,14 @@ def run(params, equip):
                 sg.rf_off()
                 bodyworn_rf_active = False
             if device_type == "wireless-pro-rx" and wireless_pro_rf_active:
-                print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
-                sg.rf_off()
+                if wirepro_manual_mode:
+                    print(
+                        "[TX] WIRELESS-PRO-RX manual mode active; "
+                        "leaving RF state unchanged at shutdown"
+                    )
+                else:
+                    print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
+                    sg.rf_off()
                 wireless_pro_rf_active = False
             sg.close()
         except Exception as e:

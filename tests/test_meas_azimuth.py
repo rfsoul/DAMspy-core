@@ -283,7 +283,14 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
 
 
 class _FakeSignalGenerator:
-    def __init__(self, event_log=None, battery_mv=3810, rf_off_error=None):
+    def __init__(
+        self,
+        event_log=None,
+        battery_mv=3810,
+        rf_on_error=None,
+        rf_off_error=None,
+        wirepro_freq_error=None,
+    ):
         self.open_calls = 0
         self.close_calls = 0
         self.device_types = []
@@ -298,7 +305,9 @@ class _FakeSignalGenerator:
         self.read_battery_info_calls = 0
         self.event_log = event_log if event_log is not None else []
         self.battery_mv = battery_mv
+        self.rf_on_error = rf_on_error
         self.rf_off_error = rf_off_error
+        self.wirepro_freq_error = wirepro_freq_error
 
     def open(self):
         self.open_calls += 1
@@ -331,10 +340,14 @@ class _FakeSignalGenerator:
     def set_wirepro_freq(self, wirepro_freq):
         self.wirepro_freqs.append(wirepro_freq)
         self.event_log.append(f"wirepro_freq:{wirepro_freq}")
+        if self.wirepro_freq_error is not None:
+            raise self.wirepro_freq_error
 
     def rf_on(self):
         self.rf_on_calls += 1
         self.event_log.append("rf_on")
+        if self.rf_on_error is not None:
+            raise self.rf_on_error
 
     def rf_off(self):
         self.rf_off_calls += 1
@@ -374,12 +387,20 @@ class _FakePositioner:
 
 
 class _FakeEquipment:
-    def __init__(self, event_log=None, rf_off_error=None):
+    def __init__(
+        self,
+        event_log=None,
+        rf_on_error=None,
+        rf_off_error=None,
+        wirepro_freq_error=None,
+    ):
         self.positioner = _FakePositioner()
         self.spectrum_analyser = _FakeSpectrumAnalyser()
         self.signal_generator = _FakeSignalGenerator(
             event_log=event_log,
+            rf_on_error=rf_on_error,
             rf_off_error=rf_off_error,
+            wirepro_freq_error=wirepro_freq_error,
         )
 
 
@@ -671,12 +692,135 @@ class MeasAzimuthRunTests(unittest.TestCase):
             [(call["antenna"], call["maxa"]) for call in sweep_calls],
             [("main", 10.0), ("main", 30.0), ("secondary", 10.0), ("secondary", 30.0)],
         )
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 2)
         self.assertTrue(
             all("maxa-" in call["combo_dir"] for call in sweep_calls)
         )
         self.assertTrue(
             all("wfreq-" in call["combo_dir"] for call in sweep_calls)
         )
+
+    def test_run_wireless_pro_rx_keeps_rf_on_across_max_angle_only_changes(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "antennas": ["main"],
+                },
+            )
+            params["max_angle_deg"] = [10, 30, 50]
+
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual([call["maxa"] for call in sweep_calls], [10.0, 30.0, 50.0])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
+        self.assertEqual(equip.signal_generator.antennas, ["main"])
+        self.assertEqual(equip.signal_generator.wirepro_freqs, [78])
+        self.assertEqual(equip.signal_generator.wirepro_powers, [-4])
+
+    def test_run_wireless_pro_rx_manual_fallback_continues_after_freq_config_failure(self):
+        equip = _FakeEquipment(
+            wirepro_freq_error=TimeoutError("urlopen timed out"),
+        )
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78],
+                    "wirepro_power": [-4],
+                    "wirepro_manual_fallback": True,
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(
+                meas_azimuth,
+                "prompt_manual_change",
+            ) as prompt_manual_change, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual([call["channel"] for call in sweep_calls], [78])
+        self.assertEqual(equip.signal_generator.wirepro_freqs, [78])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 0)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
+        self.assertEqual(prompt_manual_change.call_count, 3)
+        self.assertEqual(prompt_manual_change.call_args_list[0].args[0], "Set the DUT orientation to 'upright'.")
+        self.assertEqual(prompt_manual_change.call_args_list[1].args[0], "Set the manual test setup to polarisation 'V'.")
+        fallback_message = prompt_manual_change.call_args_list[2].args[0]
+        self.assertIn("Cannot communicate with Wireless Pro RX.", fallback_message)
+        self.assertIn("Reason: urlopen timed out", fallback_message)
+        self.assertIn("antenna is set to 'main'", fallback_message)
+        self.assertIn("wirepro_freq is 78 (2478.000 MHz)", fallback_message)
+        self.assertIn("wirepro_power is -4", fallback_message)
+        self.assertIn("spectrum analyser", fallback_message)
+
+    def test_run_wireless_pro_rx_manual_fallback_reprompts_when_sweep_settings_change(self):
+        equip = _FakeEquipment(
+            rf_on_error=TimeoutError("manual fallback"),
+        )
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "wireless-pro-rx",
+                    "wirepro_freq": [78, 79],
+                    "wirepro_power": [-4],
+                    "wirepro_manual_fallback": True,
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(
+                meas_azimuth,
+                "prompt_manual_change",
+            ) as prompt_manual_change, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual([call["channel"] for call in sweep_calls], [78, 79])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
+        self.assertEqual(prompt_manual_change.call_count, 4)
+        self.assertEqual(prompt_manual_change.call_args_list[0].args[0], "Set the DUT orientation to 'upright'.")
+        self.assertEqual(prompt_manual_change.call_args_list[1].args[0], "Set the manual test setup to polarisation 'V'.")
+        first_fallback_message = prompt_manual_change.call_args_list[2].args[0]
+        second_fallback_message = prompt_manual_change.call_args_list[3].args[0]
+        self.assertIn("Reason: manual fallback", first_fallback_message)
+        self.assertIn("wirepro_freq is 78 (2478.000 MHz)", first_fallback_message)
+        self.assertIn(
+            "Automatic WirePro control is disabled for this run. Confirm the requested settings manually.",
+            second_fallback_message,
+        )
+        self.assertIn("wirepro_freq is 79 (2479.000 MHz)", second_fallback_message)
 
     def test_run_only_prompts_manual_setup_once_when_orientation_and_polarisation_stay_fixed(self):
         equip = _FakeEquipment()
