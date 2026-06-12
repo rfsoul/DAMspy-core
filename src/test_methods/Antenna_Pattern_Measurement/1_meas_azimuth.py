@@ -28,6 +28,12 @@ NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
 
+class SweepStoppedByUser(Exception):
+    def __init__(self, stop_mode: str):
+        super().__init__(f"Sweep stopped by user: {stop_mode}")
+        self.stop_mode = stop_mode
+
+
 def format_angle(value, decimals: int = 1, signed: bool = True) -> str:
     sign = "+" if signed else ""
     return f"{value:{sign}.{decimals}f} deg"
@@ -126,9 +132,6 @@ def normalize_hendrix_tx_mode(value) -> str:
 
 
 def normalize_manual_setup_order(value) -> str:
-    if value is None:
-        return "outer"
-
     manual_setup_order = str(value).strip().lower()
     if manual_setup_order not in VALID_MANUAL_SETUP_ORDERS:
         raise ValueError(
@@ -315,6 +318,39 @@ def prompt_wirepro_manual_setup(
     )
 
 
+def prompt_bodyworn_tx_update_choice(
+    *,
+    channel,
+    power_level,
+    ctx_display,
+    tx_freq,
+    reason,
+) -> str:
+    print("\n" + "=" * 90)
+    print("[HENDRIX TX BODYWORN MODE]")
+    print(f"Reason: {reason}")
+    print(
+        "Choose update method:\n"
+        "  [C] Place the TX in the cradle so DAMspy can update channel/power/ctx\n"
+        f"  [M] Confirm the TX is already operating on channel {channel} "
+        f"({tx_freq/1e6:.3f} MHz), power {power_level}, ctx {ctx_display}"
+    )
+    print("=" * 90)
+
+    while True:
+        choice = input("Select C or M: ").strip().lower()
+        if choice in {"c", "cradle"}:
+            return "cradle"
+        if choice in {"m", "manual"}:
+            prompt_manual_change(
+                f"Confirm the TX is already operating on channel {channel} "
+                f"({tx_freq/1e6:.3f} MHz), power {power_level}, ctx {ctx_display}, "
+                "and the RF signal is visible on the spectrum analyser."
+            )
+            return "manual"
+        print("Invalid choice. Enter C for cradle update or M for manual confirmation.")
+
+
 def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
@@ -338,6 +374,26 @@ def prompt_bodyworn_tx_remove_from_cradle() -> None:
     print("Press Enter after the TX has been removed...")
     print("=" * 90)
     input()
+
+
+def prompt_interrupt_menu(current_az: float) -> str:
+    print("\n" + "=" * 90)
+    print("[INTERRUPT]")
+    print(f"Current azimuth reference: {format_angle(current_az)}")
+    print("1 = return to test")
+    print("2 = return to boresight and stop test")
+    print("3 = stop test in current location")
+    print("=" * 90)
+
+    while True:
+        choice = input("Select 1, 2, or 3: ").strip()
+        if choice == "1":
+            return "resume"
+        if choice == "2":
+            return "stop_boresight"
+        if choice == "3":
+            return "stop_hold"
+        print("Invalid choice. Enter 1, 2, or 3.")
 
 
 def iso_now() -> str:
@@ -875,6 +931,19 @@ def run_single_azimuth_sweep(
         print(f"[POS] Move complete, settling for {dwell_s:.2f} s")
         sleep(dwell_s)
 
+    def return_to_boresight():
+        nonlocal current_az
+
+        if boresight_only or abs(current_az) < 1e-9:
+            current_az = 0.0
+            print("[POS] Already at boresight reference")
+            return
+
+        print("\n[POS] Returning to boresight before stopping")
+        move_rel(-current_az)
+        current_az = 0.0
+        print("[POS] Software azimuth reset to 0 deg")
+
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["azimuth_deg", "rx_peak_dbm", "peak_freq_hz"])
@@ -947,177 +1016,238 @@ def run_single_azimuth_sweep(
                 ),
             )
 
-        print(f"\n[POS] Pre-positioning to {format_angle(maxa)} (no RF capture)")
-        move_rel(+maxa)
+        idx = 0
+        pre_positioned = False
+        while True:
+            try:
+                if not pre_positioned:
+                    print(f"\n[POS] Pre-positioning to {format_angle(maxa)} (no RF capture)")
+                    move_rel(+maxa)
+                    pre_positioned = True
 
-        print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
-        print(f"[SWEEP] Total points: {total_points}")
-        print(f"[PLOT] Live plot update threshold: {format_angle(plot_every_deg, signed=False)}")
+                    print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
+                    print(f"[SWEEP] Total points: {total_points}")
+                    print(f"[PLOT] Live plot update threshold: {format_angle(plot_every_deg, signed=False)}")
 
-        for idx in range(total_points):
-            az = current_az
+                while idx < total_points:
+                    az = current_az
 
-            print("\n----------------------------------------------------")
-            print(f"[POINT {idx+1:03d}] AZIMUTH = {format_angle(az)}")
-            print("----------------------------------------------------")
+                    print("\n----------------------------------------------------")
+                    print(f"[POINT {idx+1:03d}] AZIMUTH = {format_angle(az)}")
+                    print("----------------------------------------------------")
 
-            if use_woym:
-                update_woym_generic(
-                    run_woym_path=run_woym_path,
-                    latest_woym_path=latest_woym_path,
-                    current_state={
-                        "state": "measuring",
-                        "message": f"Measuring azimuth point at {format_angle(az)}",
-                        "target": {
+                    if use_woym:
+                        update_woym_generic(
+                            run_woym_path=run_woym_path,
+                            latest_woym_path=latest_woym_path,
+                            current_state={
+                                "state": "measuring",
+                                "message": f"Measuring azimuth point at {format_angle(az)}",
+                                "target": {
+                                    "azimuth_deg": az,
+                                },
+                            },
+                            current_sweep=build_current_sweep_dict(
+                                sweep_index=sweep_index,
+                                total_sweeps=total_sweeps,
+                                point_index=idx + 1,
+                                total_points=total_points,
+                                axis="azimuth",
+                                orientation=orientation,
+                                polarisation=polarisation,
+                                antenna=antenna,
+                                ctx=ctx,
+                                power_level=power_level,
+                                channel=channel,
+                                frequency_hz=tx_freq,
+                                battery_mv=battery_mv,
+                            ),
+                            artifacts={
+                                "latest_csv_path": csv_path,
+                                "latest_plot_path": plot_png_path,
+                                "latest_metadata_path": meta_path,
+                                "combo_dir": combo_dir,
+                            },
+                            event=f"Measuring point {idx + 1}/{total_points} at {format_angle(az)}",
+                        )
+
+                    print("[SA] Arming per-point MAX HOLD capture")
+                    print(f"[SA]   Integrating for {hold_s:.2f} s")
+
+                    t_meas_start = time()
+                    pk_f_hz, rx_dbm = sa.read_peak_maxhold(hold_s=hold_s)
+                    t_meas_end = time()
+
+                    print(
+                        f"[SA] MAX HOLD complete "
+                        f"({t_meas_end - t_meas_start:.2f} s elapsed)"
+                    )
+
+                    if lowest_level_dbm is not None and rx_dbm < lowest_level_dbm:
+                        print(
+                            f"[WARN] RX level below expected floor: "
+                            f"{rx_dbm:.2f} dBm < {lowest_level_dbm:.2f} dBm"
+                        )
+
+                    writer.writerow([f"{az:.1f}", f"{rx_dbm:.6f}", f"{pk_f_hz:.0f}"])
+                    f.flush()
+
+                    print(
+                        f"[DATA] az {format_angle(az):>10} | "
+                        f"RX = {rx_dbm:7.2f} dBm | "
+                        f"Fpk = {pk_f_hz/1e6:.6f} MHz"
+                    )
+
+                    if use_woym:
+                        last_measurement = {
+                            "orientation": orientation,
+                            "polarisation": polarisation,
+                            "antenna": antenna,
+                            "power_level": power_level,
+                            "channel": channel,
+                            "frequency_hz": tx_freq,
                             "azimuth_deg": az,
-                        },
-                    },
-                    current_sweep=build_current_sweep_dict(
-                        sweep_index=sweep_index,
-                        total_sweeps=total_sweeps,
-                        point_index=idx + 1,
-                        total_points=total_points,
-                        axis="azimuth",
-                        orientation=orientation,
-                        polarisation=polarisation,
-                        antenna=antenna,
-                        ctx=ctx,
-                        power_level=power_level,
-                        channel=channel,
-                        frequency_hz=tx_freq,
-                        battery_mv=battery_mv,
-                    ),
-                    artifacts={
-                        "latest_csv_path": csv_path,
-                        "latest_plot_path": plot_png_path,
-                        "latest_metadata_path": meta_path,
-                        "combo_dir": combo_dir,
-                    },
-                    event=f"Measuring point {idx + 1}/{total_points} at {format_angle(az)}",
-                )
+                            "rx_peak_dbm": rx_dbm,
+                            "peak_freq_hz": pk_f_hz,
+                            "timestamp": iso_now(),
+                        }
+                        if ctx is not None:
+                            last_measurement["ctx"] = ctx
+                        if battery_mv is not None:
+                            last_measurement["battery_mv"] = battery_mv
 
-            print("[SA] Arming per-point MAX HOLD capture")
-            print(f"[SA]   Integrating for {hold_s:.2f} s")
+                        update_woym_generic(
+                            run_woym_path=run_woym_path,
+                            latest_woym_path=latest_woym_path,
+                            last_measurement=last_measurement,
+                            current_sweep=build_current_sweep_dict(
+                                sweep_index=sweep_index,
+                                total_sweeps=total_sweeps,
+                                point_index=idx + 1,
+                                total_points=total_points,
+                                axis="azimuth",
+                                orientation=orientation,
+                                polarisation=polarisation,
+                                antenna=antenna,
+                                ctx=ctx,
+                                power_level=power_level,
+                                channel=channel,
+                                frequency_hz=tx_freq,
+                                battery_mv=battery_mv,
+                            ),
+                            artifacts={
+                                "latest_csv_path": csv_path,
+                                "latest_plot_path": plot_png_path,
+                                "latest_metadata_path": meta_path,
+                                "combo_dir": combo_dir,
+                            },
+                            event=(
+                                f"Measured az {format_angle(az)} "
+                                f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
+                            ),
+                        )
 
-            t_meas_start = time()
-            pk_f_hz, rx_dbm = sa.read_peak_maxhold(hold_s=hold_s)
-            t_meas_end = time()
+                        update_woym_azimuth(
+                            run_woym_path=run_woym_path,
+                            latest_woym_path=latest_woym_path,
+                            spectrum_analyser=build_spectrum_analyser_block(
+                                requested_center_hz=tx_freq,
+                                requested_span_hz=span_hz,
+                                requested_rbw_hz=rbw_hz,
+                                requested_vbw_hz=vbw_hz,
+                                last_peak_freq_hz=pk_f_hz,
+                                last_peak_dbm=rx_dbm,
+                            ),
+                        )
 
-            print(
-                f"[SA] MAX HOLD complete "
-                f"({t_meas_end - t_meas_start:.2f} s elapsed)"
-            )
+                    is_first_point = last_plot_az is None
+                    moved_enough = (
+                        last_plot_az is not None
+                        and abs(az - last_plot_az) >= plot_every_deg
+                    )
+                    is_final_point = idx == steps
 
-            if lowest_level_dbm is not None and rx_dbm < lowest_level_dbm:
-                print(
-                    f"[WARN] RX level below expected floor: "
-                    f"{rx_dbm:.2f} dBm < {lowest_level_dbm:.2f} dBm"
-                )
+                    if is_first_point or moved_enough or is_final_point:
+                        if use_woym:
+                            update_woym_generic(
+                                run_woym_path=run_woym_path,
+                                latest_woym_path=latest_woym_path,
+                                current_state={
+                                    "state": "plotting",
+                                    "message": f"Updating live plot at {format_angle(az)}",
+                                    "target": {
+                                        "azimuth_deg": az,
+                                    },
+                                },
+                                artifacts={
+                                    "latest_csv_path": csv_path,
+                                    "latest_plot_path": plot_png_path,
+                                    "latest_metadata_path": meta_path,
+                                    "combo_dir": combo_dir,
+                                },
+                                event=f"Updating live plot at {format_angle(az)}",
+                            )
+                        write_partial_polar_plot(csv_path, plot_png_path)
+                        last_plot_az = az
 
-            writer.writerow([f"{az:.1f}", f"{rx_dbm:.6f}", f"{pk_f_hz:.0f}"])
-            f.flush()
+                    if az > -maxa:
+                        print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
+                        move_rel(-step)
 
-            print(
-                f"[DATA] az {format_angle(az):>10} | "
-                f"RX = {rx_dbm:7.2f} dBm | "
-                f"Fpk = {pk_f_hz/1e6:.6f} MHz"
-            )
+                    idx += 1
+                break
+            except KeyboardInterrupt:
+                action = prompt_interrupt_menu(current_az)
+                if action == "resume":
+                    print("[INTERRUPT] Resuming test")
+                    continue
 
-            if use_woym:
-                last_measurement = {
-                    "orientation": orientation,
-                    "polarisation": polarisation,
-                    "antenna": antenna,
-                    "power_level": power_level,
-                    "channel": channel,
-                    "frequency_hz": tx_freq,
-                    "azimuth_deg": az,
-                    "rx_peak_dbm": rx_dbm,
-                    "peak_freq_hz": pk_f_hz,
-                    "timestamp": iso_now(),
-                }
-                if ctx is not None:
-                    last_measurement["ctx"] = ctx
-                if battery_mv is not None:
-                    last_measurement["battery_mv"] = battery_mv
+                stop_message = "User stopped sweep in current location"
+                if action == "stop_boresight":
+                    try:
+                        return_to_boresight()
+                    except Exception as e:
+                        stop_message = f"User requested boresight return, but move failed: {e}"
+                        print(f"[WARN] {stop_message}")
+                    else:
+                        stop_message = "User stopped sweep after return to boresight"
 
-                update_woym_generic(
-                    run_woym_path=run_woym_path,
-                    latest_woym_path=latest_woym_path,
-                    last_measurement=last_measurement,
-                    current_sweep=build_current_sweep_dict(
-                        sweep_index=sweep_index,
-                        total_sweeps=total_sweeps,
-                        point_index=idx + 1,
-                        total_points=total_points,
-                        axis="azimuth",
-                        orientation=orientation,
-                        polarisation=polarisation,
-                        antenna=antenna,
-                        ctx=ctx,
-                        power_level=power_level,
-                        channel=channel,
-                        frequency_hz=tx_freq,
-                        battery_mv=battery_mv,
-                    ),
-                    artifacts={
-                        "latest_csv_path": csv_path,
-                        "latest_plot_path": plot_png_path,
-                        "latest_metadata_path": meta_path,
-                        "combo_dir": combo_dir,
-                    },
-                    event=(
-                        f"Measured az {format_angle(az)} "
-                        f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
-                    ),
-                )
-
-                update_woym_azimuth(
-                    run_woym_path=run_woym_path,
-                    latest_woym_path=latest_woym_path,
-                    spectrum_analyser=build_spectrum_analyser_block(
-                        requested_center_hz=tx_freq,
-                        requested_span_hz=span_hz,
-                        requested_rbw_hz=rbw_hz,
-                        requested_vbw_hz=vbw_hz,
-                        last_peak_freq_hz=pk_f_hz,
-                        last_peak_dbm=rx_dbm,
-                    ),
-                )
-
-            is_first_point = last_plot_az is None
-            moved_enough = (
-                last_plot_az is not None
-                and abs(az - last_plot_az) >= plot_every_deg
-            )
-            is_final_point = idx == steps
-
-            if is_first_point or moved_enough or is_final_point:
                 if use_woym:
                     update_woym_generic(
                         run_woym_path=run_woym_path,
                         latest_woym_path=latest_woym_path,
                         current_state={
-                            "state": "plotting",
-                            "message": f"Updating live plot at {format_angle(az)}",
+                            "state": "idle",
+                            "message": stop_message,
                             "target": {
-                                "azimuth_deg": az,
+                                "azimuth_deg": current_az,
                             },
                         },
+                        current_sweep=build_current_sweep_dict(
+                            sweep_index=sweep_index,
+                            total_sweeps=total_sweeps,
+                            point_index=min(idx + 1, total_points),
+                            total_points=total_points,
+                            axis="azimuth",
+                            orientation=orientation,
+                            polarisation=polarisation,
+                            antenna=antenna,
+                            ctx=ctx,
+                            power_level=power_level,
+                            channel=channel,
+                            frequency_hz=tx_freq,
+                            battery_mv=battery_mv,
+                        ),
                         artifacts={
                             "latest_csv_path": csv_path,
                             "latest_plot_path": plot_png_path,
                             "latest_metadata_path": meta_path,
                             "combo_dir": combo_dir,
                         },
-                        event=f"Updating live plot at {format_angle(az)}",
+                        event=stop_message,
                     )
-                write_partial_polar_plot(csv_path, plot_png_path)
-                last_plot_az = az
 
-            if az > -maxa:
-                print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
-                move_rel(-step)
+                raise SweepStoppedByUser(action)
 
         print("\n[POS] Sweep complete - returning to start position")
         move_rel(+maxa)
@@ -1206,10 +1336,6 @@ def run(params, equip):
     height_m = params.get("height_m", None)
     lowest_level_dbm = params.get("lowest_level", None)
     plot_every_deg = float(params.get("live_plot_every_deg", 20.0))
-    manual_setup_order = normalize_manual_setup_order(
-        params.get("manual_setup_order")
-    )
-
     orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
 
@@ -1224,12 +1350,17 @@ def run(params, equip):
     is_bodyworn_hendrix_tx = (
         device_type == "hendrix_tx" and tx_mode == "bodyworn"
     )
+    raw_manual_setup_order = params.get("manual_setup_order")
+    if raw_manual_setup_order is None:
+        manual_setup_order = "inner" if is_bodyworn_hendrix_tx else "outer"
+    else:
+        manual_setup_order = normalize_manual_setup_order(raw_manual_setup_order)
     channels = sg_sweep_cfg["channels"]
     power_levels = sg_sweep_cfg["power_levels"]
     frequency_label = sg_sweep_cfg["frequency_label"]
     power_label = sg_sweep_cfg["power_label"]
-    wirepro_manual_fallback = coerce_bool(
-        sg_cfg.get("wirepro_manual_fallback"),
+    manual_fallback = coerce_bool(
+        get_first_present(sg_cfg, ("manual_fallback", "wirepro_manual_fallback")),
         default=False,
     )
     antenna_variants = sg_sweep_cfg["antennas"]
@@ -1267,8 +1398,8 @@ def run(params, equip):
     print(f"      Device type        : {device_type}")
     if tx_mode is not None:
         print(f"      TX mode            : {tx_mode}")
-    if device_type == "wireless-pro-rx":
-        print(f"      WirePro fallback   : {wirepro_manual_fallback}")
+    if manual_fallback:
+        print(f"      Manual fallback    : {manual_fallback}")
     if ctx_levels and ctx_levels[0] is not None:
         print(
             "      CTX                : "
@@ -1339,12 +1470,14 @@ def run(params, equip):
             "sig_gen_1.ctx requires a signal-generator driver that supports set_ctx()"
         )
     try:
+        stopped_by_user = None
         combo_index = 0
         current_ctx_level = None
         current_channel = None
         current_power_level = None
         current_antenna = None
         bodyworn_rf_active = False
+        bodyworn_manual_mode = False
         wireless_pro_rf_active = False
         wirepro_manual_mode = False
         current_battery_mv = None
@@ -1358,7 +1491,7 @@ def run(params, equip):
             nonlocal wirepro_manual_mode
             nonlocal wireless_pro_rf_active
 
-            if device_type != "wireless-pro-rx" or not wirepro_manual_fallback:
+            if device_type != "wireless-pro-rx" or not manual_fallback:
                 return False
 
             print(f"[WARN] Wireless Pro RX automatic control failed: {reason}")
@@ -1701,49 +1834,64 @@ def run(params, equip):
                             sg.set_antenna(antenna)
 
                     if is_bodyworn_hendrix_tx and config_change_required:
-                        prompt_bodyworn_tx_in_cradle(
-                            return_from_bodyworn_rf=bodyworn_rf_active
-                        )
-                        if bodyworn_rf_active:
-                            print("[TX] Stopping HENDRIX_TX RF before cradle update")
-                            sg.rf_off()
-                            bodyworn_rf_active = False
-                        current_battery_mv = capture_hendrix_tx_battery_mv(
-                            sg=sg,
-                            device_type=device_type,
-                            combo_meta=combo_meta,
-                            meta_path=meta_path,
-                            use_woym=use_woym,
-                            run_woym_path=run_woym_path,
-                            latest_woym_path=latest_woym_path,
-                            current_group=current_group,
-                            current_test_method=current_test_method,
-                            sweep_index=combo_index,
-                            total_sweeps=total_sweeps,
-                            total_points=sweep_point_count,
-                            axis=axis,
-                            orientation=orientation,
-                            polarisation=pol,
-                            antenna=antenna_label,
-                            ctx=ctx_value,
-                            power_level=power_level,
-                            channel=channel,
-                            frequency_hz=tx_freq,
-                            csv_path=csv_path,
-                            plot_png_path=plot_png_path,
-                            combo_dir=combo_dir,
-                        )
+                        if manual_fallback:
+                            update_method = prompt_bodyworn_tx_update_choice(
+                                channel=channel,
+                                power_level=power_level,
+                                ctx_display=ctx_display,
+                                tx_freq=tx_freq,
+                                reason="Manual fallback is enabled for this run.",
+                            )
+                            bodyworn_manual_mode = update_method == "manual"
+                            if bodyworn_manual_mode:
+                                bodyworn_rf_active = True
+                        else:
+                            bodyworn_manual_mode = False
 
-                    if ctx_change_required and ctx_level is not None:
+                        if not bodyworn_manual_mode:
+                            prompt_bodyworn_tx_in_cradle(
+                                return_from_bodyworn_rf=bodyworn_rf_active
+                            )
+                            if bodyworn_rf_active:
+                                print("[TX] Stopping HENDRIX_TX RF before cradle update")
+                                sg.rf_off()
+                                bodyworn_rf_active = False
+                            current_battery_mv = capture_hendrix_tx_battery_mv(
+                                sg=sg,
+                                device_type=device_type,
+                                combo_meta=combo_meta,
+                                meta_path=meta_path,
+                                use_woym=use_woym,
+                                run_woym_path=run_woym_path,
+                                latest_woym_path=latest_woym_path,
+                                current_group=current_group,
+                                current_test_method=current_test_method,
+                                sweep_index=combo_index,
+                                total_sweeps=total_sweeps,
+                                total_points=sweep_point_count,
+                                axis=axis,
+                                orientation=orientation,
+                                polarisation=pol,
+                                antenna=antenna_label,
+                                ctx=ctx_value,
+                                power_level=power_level,
+                                channel=channel,
+                                frequency_hz=tx_freq,
+                                csv_path=csv_path,
+                                plot_png_path=plot_png_path,
+                                combo_dir=combo_dir,
+                            )
+
+                    if ctx_change_required and ctx_level is not None and not bodyworn_manual_mode:
                         print(f"[TX] Setting Hendrix CTX to {ctx_display}")
                         sg.set_ctx(ctx_level)
-                    if device_type != "wireless-pro-rx":
+                    if device_type != "wireless-pro-rx" and not bodyworn_manual_mode:
                         if power_change_required:
                             sg.set_power_level(power_level)
                         if channel_change_required:
                             sg.set_channel(channel)
 
-                    if is_bodyworn_hendrix_tx and config_change_required:
+                    if is_bodyworn_hendrix_tx and config_change_required and not bodyworn_manual_mode:
                         print(f"[TX] Starting {device_type.upper()} RF")
                         sg.rf_on()
                         bodyworn_rf_active = True
@@ -1781,7 +1929,12 @@ def run(params, equip):
                         if battery_mv is not None:
                             combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
                             meta_write(meta_path, combo_meta)
-                        if bodyworn_rf_active:
+                        if bodyworn_manual_mode:
+                            print(
+                                "[TX] Hendrix TX bodyworn manual fallback active: "
+                                "assuming RF is already correct for this sweep"
+                            )
+                        elif bodyworn_rf_active:
                             print(
                                 "[TX] Hendrix TX bodyworn mode: "
                                 "RF already on for this sweep"
@@ -1876,6 +2029,8 @@ def run(params, equip):
                             vbw_hz=vbw_hz,
                             battery_mv=battery_mv,
                         )
+                    except SweepStoppedByUser:
+                        raise
                     except Exception as e:
                         if use_woym:
                             set_woym_error(
@@ -1889,14 +2044,22 @@ def run(params, equip):
                         if not is_bodyworn_hendrix_tx and device_type != "wireless-pro-rx":
                             print(f"[TX] Stopping {device_type.upper()} RF")
                             sg.rf_off()
+    except SweepStoppedByUser as e:
+        stopped_by_user = e
     except Exception:
         raise
     finally:
         try:
             if is_bodyworn_hendrix_tx and bodyworn_rf_active:
-                prompt_bodyworn_tx_in_cradle(return_from_bodyworn_rf=True)
-                print("[TX] Stopping HENDRIX_TX RF before shutdown")
-                sg.rf_off()
+                if bodyworn_manual_mode:
+                    print(
+                        "[TX] Hendrix TX bodyworn manual fallback active; "
+                        "leaving RF state unchanged at shutdown"
+                    )
+                else:
+                    prompt_bodyworn_tx_in_cradle(return_from_bodyworn_rf=True)
+                    print("[TX] Stopping HENDRIX_TX RF before shutdown")
+                    sg.rf_off()
                 bodyworn_rf_active = False
             if device_type == "wireless-pro-rx" and wireless_pro_rf_active:
                 if wirepro_manual_mode:
@@ -1918,6 +2081,31 @@ def run(params, equip):
                     "1_meas_azimuth.run/finally",
                 )
             raise
+
+    if stopped_by_user is not None:
+        if use_woym:
+            stop_mode_labels = {
+                "resume": "resumed",
+                "stop_boresight": "stopped at boresight",
+                "stop_hold": "stopped in current location",
+            }
+            stop_label = stop_mode_labels.get(stopped_by_user.stop_mode, "stopped by user")
+            update_woym_generic(
+                run_woym_path=run_woym_path,
+                latest_woym_path=latest_woym_path,
+                current_state={
+                    "state": "idle",
+                    "message": f"{current_test_method} {stop_label}",
+                    "target": {},
+                },
+                event=f"{current_test_method} {stop_label}",
+            )
+
+        print("\n====================================================")
+        print("[1_meas_azimuth] STOPPED BY USER")
+        print(f"[1_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
+        print("====================================================\n")
+        return
 
     if use_woym:
         update_woym_generic(

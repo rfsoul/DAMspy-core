@@ -1,5 +1,5 @@
 DUT_product: "hendrix-tx" #"wireless-pro-rx"
-DUT_hardware_config: "lens_no_coating"
+DUT_hardware_config: "sd_lens_no_coating"
 DUT_serial_number: "001"
 foldername_comment: "bodyworn"
 yaml_comment: ""
@@ -10,7 +10,6 @@ orientation_description: #with usb on left the left tx slot is slot 1
   ori2: "Hor usb left  Tx in slot 1 facing boresight"
   ori3: "Vert usb up   Tx in slot 1 facing boresight"
   ori4: "Hor usb right Tx in slot 1 facing boresight"
-
 
 #orientations: [ori1, ori2]  # [ori1, ori2, ori3, ori4]
 #orientation_description:  #see DAMspy-core\src\DAMspy_logs\orientations\rxcc
@@ -32,13 +31,13 @@ use_woym: true
 
 height_m: 1.5
 polarisation: [H,V] #[H, V]
-manual_setup_order: outer   # outer = set orientation/polarisation first, then sweep RF settings; inner = hold RF settings fixed while running all orientation/polarisation combinations
+manual_setup_order: inner   # outer = set orientation/polarisation first, then sweep RF settings; inner = hold RF settings fixed while running all orientation/polarisation combinations
 dwell_s: 0
-lowest_level: -80
+lowest_level: -80 #dBm
 
 sig_gen_1:  # rode rxcc device
   device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
-  #wirepro_manual_fallback: true
+  manual_fallback: true
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
   tx_power: 16 #in dBm
