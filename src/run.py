@@ -80,6 +80,13 @@ def optional_token(value):
     return text if text else None
 
 
+def output_group_token(current_group: str) -> str:
+    aliases = {
+        "Antenna_Pattern_Measurement": "APM",
+    }
+    return sanitize_windows_path(aliases.get(current_group, current_group))
+
+
 def copy_yaml_to_output(yaml_path: Path, outdir: Path):
     if not yaml_path.exists():
         print(f"[WARN] YAML not found for copy: {yaml_path}")
@@ -134,8 +141,6 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     orientations = first_params.get("orientations", [])
     polarisations = first_params.get("polarisation", [])
     step_deg = first_params.get("step_deg", "unknown")
-    max_angle_deg = first_params.get("max_angle_deg")
-
     sg_cfg = first_params.get("sig_gen_1", {})
     channels = sg_cfg.get("channels", [])
     power_levels = sg_cfg.get("power_levels", [])
@@ -151,7 +156,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     dut_identity = "_".join(part for part in dut_identity_parts if part)
 
     parts = [
-        sanitize_windows_path(current_group),
+        output_group_token(current_group),
         timestamp,
         dut_identity or "UnknownDUT_UnknownSerial",
         optional_token(foldername_comment),
@@ -159,7 +164,6 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
         list_token("Ch", channels),
         list_token("Pwr", power_levels),
         list_token("Pol", polarisations),
-        list_token("MaxA", max_angle_deg),
         f"Step_{sanitize_windows_path(step_deg)}deg",
         f"RxAnt_{sanitize_windows_path(rx_antenna)}",
     ]

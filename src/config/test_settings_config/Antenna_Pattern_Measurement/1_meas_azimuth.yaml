@@ -1,9 +1,9 @@
-DUT_product: "Hendrix-Tx"
-DUT_hardware_config: "V3-04F"
-DUT_serial_number: "002"
-foldername_comment: "bodyworn_USB_attached"
+DUT_product: "hendrix-tx" #"wireless-pro-rx"
+DUT_hardware_config: "lens_no_coating"
+DUT_serial_number: "001"
+foldername_comment: "bodyworn"
 yaml_comment: ""
-orientations: [ori1]  # [ori1, ori2]
+orientations: [ori1, ori2]  # [ori1, ori2]
 orientation_photo_location: "C:/Git/DAMspy-core/src/DAMspy_logs/orientations/hendrix_tx"
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
@@ -21,7 +21,8 @@ orientation_description: #with usb on left the left tx slot is slot 1
 
 axis: azimuth
 boresight_deg: 0
-max_angle_deg: 170
+max_angle_deg: [170]
+
 step_deg: 2
 max_hold_seconds: 2
 sweep_mode: boresight_return     #boresight_return  #boresight_only
@@ -30,23 +31,26 @@ use_woym: true
 
 
 height_m: 1.5
-polarisation: [V] #[H, V]
+polarisation: [H,V] #[H, V]
+manual_setup_order: outer   # outer = set orientation/polarisation first, then sweep RF settings; inner = hold RF settings fixed while running all orientation/polarisation combinations
 dwell_s: 0
 lowest_level: -80
 
 sig_gen_1:  # rode rxcc device
-  device_type: "wireless-pro-rx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
+  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
+  #wirepro_manual_fallback: true
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
-  tx_power: 14 #in dBm
-  #channels: [0, 40, 80]   # [0, 20, 40, 60, 80]
-  wirepro_freq: [50]
-  #power_levels: [10]
-  wirepro_power: [4]
-  #CTX: [1,0]   #not for wirepro
-  # wirepro_freq: [78]  # Wireless Pro RX only: 2400 MHz + this MHz value
-  # wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
-  antennas: ["main", "secondary"]
+  tx_power: 16 #in dBm
+  channels: [40, 0, 80]   # [0, 20, 40, 60, 80]
+  #wirepro_freq: [50]
+  power_levels: [10]
+  #wirepro_power: [4]
+  #wirepro_power: [4]
+  CTX: [1]   #not for wirepro
+  #wirepro_freq: [50]  # Wireless Pro RX only: 2400 MHz + this MHz value
+  #wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
+  antennas: ["main"] #["main", "secondary"]
 
 rx_path:
   antenna: "Horn WR340"   # receive antenna into spectrum analyser

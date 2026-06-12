@@ -24,7 +24,7 @@ Rf_control_room_minipc:
       sig_gen_1:
         driver: "equipment/signal_generator/rxcc.py"
         class_name: "RXCC"
-        rpicontrol_ipaddress: "http://10.0.1.195:8000"
+        rpicontrol_ipaddress: "http://10.0.1.232:8000"
         timeout: 5
         max_retries: 2
 
