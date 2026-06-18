@@ -281,6 +281,37 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
             self.assertEqual(mock_woym.call_count, 1)
             self.assertIn("battery read failed", mock_woym.call_args.kwargs["event"])
 
+    def test_prompt_bodyworn_tx_update_choice_accepts_numeric_choices(self):
+        with mock.patch("builtins.input", side_effect=["1"]), \
+             mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(
+                meas_azimuth.prompt_bodyworn_tx_update_choice(
+                    channel=40,
+                    power_level=10,
+                    ctx_display="1 (high)",
+                    tx_freq=2440000000,
+                    reason="Manual fallback is enabled for this run.",
+                ),
+                "cradle",
+            )
+
+        with mock.patch("builtins.input", side_effect=["2"]), \
+             mock.patch.object(meas_azimuth, "prompt_manual_change") as prompt_manual_change, \
+             mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(
+                meas_azimuth.prompt_bodyworn_tx_update_choice(
+                    channel=40,
+                    power_level=10,
+                    ctx_display="1 (high)",
+                    tx_freq=2440000000,
+                    reason="Manual fallback is enabled for this run.",
+                ),
+                "manual",
+            )
+
+        self.assertEqual(prompt_manual_change.call_count, 1)
+        self.assertIn("channel 40", prompt_manual_change.call_args.args[0])
+
 
 class _FakeSignalGenerator:
     def __init__(
@@ -515,6 +546,84 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(prompt_in.call_count, 0)
         self.assertEqual(prompt_out.call_count, 0)
         self.assertEqual(sweep_battery_values, [3810])
+
+    def test_run_preserves_primary_bodyworn_failure_when_shutdown_cleanup_also_fails(self):
+        equip = _FakeEquipment(rf_off_error=RuntimeError("cleanup failed"))
+        primary_error = RuntimeError("sweep failed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_tx",
+                    "tx_mode": "bodyworn",
+                    "channels": [7],
+                    "power_levels": [3],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_in_cradle"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_remove_from_cradle"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=primary_error,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, "sweep failed"):
+                    meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
+        self.assertEqual(equip.signal_generator.close_calls, 1)
+
+    def test_run_bodyworn_manual_fallback_reprompts_after_cradle_update_failure(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+        update_reasons = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_tx",
+                    "tx_mode": "bodyworn",
+                    "manual_fallback": True,
+                    "channels": [7],
+                    "power_levels": [3],
+                },
+            )
+            with mock.patch.object(
+                meas_azimuth,
+                "prompt_bodyworn_tx_update_choice",
+                side_effect=lambda **kwargs: (
+                    update_reasons.append(kwargs["reason"]),
+                    "cradle" if len(update_reasons) == 1 else "manual",
+                )[1],
+            ), \
+                 mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_in_cradle"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_remove_from_cradle"), \
+                 mock.patch.object(
+                     equip.signal_generator,
+                     "rf_on",
+                     side_effect=RuntimeError("hid update failed"),
+                 ) as rf_on, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(update_reasons, [
+            "Manual fallback is enabled for this run.",
+            "hid update failed",
+        ])
+        self.assertEqual(rf_on.call_count, 1)
+        self.assertEqual([call["channel"] for call in sweep_calls], [7])
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
 
     def test_run_passes_ctx_low_from_yaml_to_signal_generator(self):
         equip = _FakeEquipment()

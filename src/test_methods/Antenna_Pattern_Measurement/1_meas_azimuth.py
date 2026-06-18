@@ -260,14 +260,77 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
 
 
 def build_manual_variants(orientations, polarisations) -> list[dict]:
-    return [
-        {
-            "orientation": orientation,
-            "polarisation": polarisation,
-        }
-        for orientation in orientations
-        for polarisation in polarisations
+    variants = []
+    for index, orientation in enumerate(orientations):
+        polarisation_order = polarisations if index % 2 == 0 else list(reversed(polarisations))
+        for polarisation in polarisation_order:
+            variants.append(
+                {
+                    "orientation": orientation,
+                    "polarisation": polarisation,
+                }
+            )
+    return variants
+
+
+def manual_variant_change_cost(current_variant: dict, next_variant: dict) -> int:
+    cost = 0
+    if current_variant["orientation"] != next_variant["orientation"]:
+        cost += 1
+    if current_variant["polarisation"] != next_variant["polarisation"]:
+        cost += 1
+    return cost
+
+
+def order_manual_variants_for_current_state(
+    manual_variants: list[dict],
+    current_orientation,
+    current_polarisation,
+) -> list[dict]:
+    if not manual_variants:
+        return []
+
+    indexed_variants = list(enumerate(manual_variants))
+    ordered = []
+
+    start_index = None
+    if current_orientation is not None and current_polarisation is not None:
+        for index, variant in indexed_variants:
+            if (
+                variant["orientation"] == current_orientation
+                and variant["polarisation"] == current_polarisation
+            ):
+                start_index = index
+                break
+
+    if start_index is None:
+        start_index = 0
+
+    current_variant = manual_variants[start_index]
+    ordered.append(current_variant)
+    remaining = [
+        (index, variant)
+        for index, variant in indexed_variants
+        if index != start_index
     ]
+
+    while remaining:
+        next_index, next_variant = min(
+            remaining,
+            key=lambda item: (
+                manual_variant_change_cost(current_variant, item[1]),
+                item[0],
+            ),
+        )
+        ordered.append(next_variant)
+        current_variant = next_variant
+        remaining = [
+            (index, variant)
+            for index, variant in remaining
+            if index != next_index
+        ]
+
+    return ordered
 
 
 def build_rf_variants(antenna_variants, power_levels, channels, ctx_levels) -> list[dict]:
@@ -331,24 +394,24 @@ def prompt_bodyworn_tx_update_choice(
     print(f"Reason: {reason}")
     print(
         "Choose update method:\n"
-        "  [C] Place the TX in the cradle so DAMspy can update channel/power/ctx\n"
-        f"  [M] Confirm the TX is already operating on channel {channel} "
+        "  [1] Place the TX in the cradle so DAMspy can update channel/power/ctx\n"
+        f"  [2] Confirm the TX is already operating on channel {channel} "
         f"({tx_freq/1e6:.3f} MHz), power {power_level}, ctx {ctx_display}"
     )
     print("=" * 90)
 
     while True:
-        choice = input("Select C or M: ").strip().lower()
-        if choice in {"c", "cradle"}:
+        choice = input("Select 1 or 2: ").strip().lower()
+        if choice in {"1", "cradle", "update"}:
             return "cradle"
-        if choice in {"m", "manual"}:
+        if choice in {"2", "manual"}:
             prompt_manual_change(
                 f"Confirm the TX is already operating on channel {channel} "
                 f"({tx_freq/1e6:.3f} MHz), power {power_level}, ctx {ctx_display}, "
                 "and the RF signal is visible on the spectrum analyser."
             )
             return "manual"
-        print("Invalid choice. Enter C for cradle update or M for manual confirmation.")
+        print("Invalid choice. Enter 1 for cradle update or 2 for manual confirmation.")
 
 
 def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
@@ -1469,6 +1532,8 @@ def run(params, equip):
         raise RuntimeError(
             "sig_gen_1.ctx requires a signal-generator driver that supports set_ctx()"
         )
+    pending_error = None
+
     try:
         stopped_by_user = None
         combo_index = 0
@@ -1560,6 +1625,13 @@ def run(params, equip):
         inner_variants = rf_variants if manual_setup_order == "outer" else manual_variants
 
         for outer_variant in outer_variants:
+            if manual_setup_order == "inner":
+                inner_variants = order_manual_variants_for_current_state(
+                    manual_variants,
+                    confirmed_orientation,
+                    confirmed_polarisation,
+                )
+
             if manual_setup_order == "outer":
                 orientation = outer_variant["orientation"]
                 pol = outer_variant["polarisation"]
@@ -1568,11 +1640,12 @@ def run(params, equip):
             for inner_variant in inner_variants:
                 if manual_setup_order == "outer":
                     rf_variant = inner_variant
+                    manual_setup_pending = False
                 else:
                     rf_variant = outer_variant
                     orientation = inner_variant["orientation"]
                     pol = inner_variant["polarisation"]
-                    ensure_manual_setup(orientation, pol)
+                    manual_setup_pending = True
 
                 antenna_cfg = rf_variant["antenna_cfg"]
                 antenna = antenna_cfg["value"]
@@ -1833,22 +1906,13 @@ def run(params, equip):
                         elif antenna is not None and antenna_change_required:
                             sg.set_antenna(antenna)
 
-                    if is_bodyworn_hendrix_tx and config_change_required:
-                        if manual_fallback:
-                            update_method = prompt_bodyworn_tx_update_choice(
-                                channel=channel,
-                                power_level=power_level,
-                                ctx_display=ctx_display,
-                                tx_freq=tx_freq,
-                                reason="Manual fallback is enabled for this run.",
-                            )
-                            bodyworn_manual_mode = update_method == "manual"
-                            if bodyworn_manual_mode:
-                                bodyworn_rf_active = True
-                        else:
-                            bodyworn_manual_mode = False
+                    bodyworn_config_applied = False
 
-                        if not bodyworn_manual_mode:
+                    if is_bodyworn_hendrix_tx and config_change_required:
+                        def perform_bodyworn_cradle_update():
+                            nonlocal bodyworn_rf_active
+                            nonlocal current_battery_mv
+
                             prompt_bodyworn_tx_in_cradle(
                                 return_from_bodyworn_rf=bodyworn_rf_active
                             )
@@ -1856,6 +1920,7 @@ def run(params, equip):
                                 print("[TX] Stopping HENDRIX_TX RF before cradle update")
                                 sg.rf_off()
                                 bodyworn_rf_active = False
+
                             current_battery_mv = capture_hendrix_tx_battery_mv(
                                 sg=sg,
                                 device_type=device_type,
@@ -1882,16 +1947,85 @@ def run(params, equip):
                                 combo_dir=combo_dir,
                             )
 
-                    if ctx_change_required and ctx_level is not None and not bodyworn_manual_mode:
+                            if ctx_change_required and ctx_level is not None:
+                                print(f"[TX] Setting Hendrix CTX to {ctx_display}")
+                                sg.set_ctx(ctx_level)
+                            if power_change_required:
+                                sg.set_power_level(power_level)
+                            if channel_change_required:
+                                sg.set_channel(channel)
+
+                            print(f"[TX] Starting {device_type.upper()} RF")
+                            sg.rf_on()
+                            bodyworn_rf_active = True
+                            prompt_bodyworn_tx_remove_from_cradle()
+
+                        if manual_fallback:
+                            update_reason = "Manual fallback is enabled for this run."
+                            while True:
+                                update_method = prompt_bodyworn_tx_update_choice(
+                                    channel=channel,
+                                    power_level=power_level,
+                                    ctx_display=ctx_display,
+                                    tx_freq=tx_freq,
+                                    reason=update_reason,
+                                )
+                                bodyworn_manual_mode = update_method == "manual"
+                                if bodyworn_manual_mode:
+                                    bodyworn_rf_active = True
+                                    break
+
+                                try:
+                                    perform_bodyworn_cradle_update()
+                                    bodyworn_config_applied = True
+                                    break
+                                except Exception as e:
+                                    update_reason = str(e)
+                                    print(
+                                        "[WARN] Hendrix TX cradle update failed; "
+                                        "choose 1 to try again or 2 for manual confirmation."
+                                    )
+                                    print(f"[WARN] Reason: {update_reason}")
+                                    if use_woym:
+                                        update_woym_generic(
+                                            run_woym_path=run_woym_path,
+                                            latest_woym_path=latest_woym_path,
+                                            current_test_group=current_group,
+                                            current_test_method=current_test_method,
+                                            event=(
+                                                "Hendrix TX cradle update failed; "
+                                                f"manual fallback prompt reopened: {update_reason}"
+                                            ),
+                                        )
+                        else:
+                            bodyworn_manual_mode = False
+                            perform_bodyworn_cradle_update()
+                            bodyworn_config_applied = True
+
+                    if (
+                        ctx_change_required
+                        and ctx_level is not None
+                        and not bodyworn_manual_mode
+                        and not bodyworn_config_applied
+                    ):
                         print(f"[TX] Setting Hendrix CTX to {ctx_display}")
                         sg.set_ctx(ctx_level)
-                    if device_type != "wireless-pro-rx" and not bodyworn_manual_mode:
+                    if (
+                        device_type != "wireless-pro-rx"
+                        and not bodyworn_manual_mode
+                        and not bodyworn_config_applied
+                    ):
                         if power_change_required:
                             sg.set_power_level(power_level)
                         if channel_change_required:
                             sg.set_channel(channel)
 
-                    if is_bodyworn_hendrix_tx and config_change_required and not bodyworn_manual_mode:
+                    if (
+                        is_bodyworn_hendrix_tx
+                        and config_change_required
+                        and not bodyworn_manual_mode
+                        and not bodyworn_config_applied
+                    ):
                         print(f"[TX] Starting {device_type.upper()} RF")
                         sg.rf_on()
                         bodyworn_rf_active = True
@@ -1901,6 +2035,10 @@ def run(params, equip):
                     current_channel = channel
                     current_power_level = power_level
                     current_antenna = antenna
+
+                    if manual_setup_pending:
+                        ensure_manual_setup(orientation, pol)
+                        manual_setup_pending = False
 
                     print("\n[SA] Configuring spectrum analyser (narrowband mode)")
                     print(
@@ -2046,9 +2184,13 @@ def run(params, equip):
                             sg.rf_off()
     except SweepStoppedByUser as e:
         stopped_by_user = e
-    except Exception:
+    except Exception as e:
+        pending_error = e
         raise
     finally:
+        cleanup_error = None
+        cleanup_where = "1_meas_azimuth.run/finally"
+
         try:
             if is_bodyworn_hendrix_tx and bodyworn_rf_active:
                 if bodyworn_manual_mode:
@@ -2071,16 +2213,42 @@ def run(params, equip):
                     print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
                     sg.rf_off()
                 wireless_pro_rf_active = False
+        except Exception as e:
+            cleanup_error = e
+
+        try:
             sg.close()
         except Exception as e:
-            if use_woym:
-                set_woym_error(
-                    run_woym_path,
-                    latest_woym_path,
-                    f"Signal generator close failed: {e}",
-                    "1_meas_azimuth.run/finally",
+            if cleanup_error is None:
+                cleanup_error = e
+
+        if cleanup_error is not None:
+            cleanup_message = f"Signal generator cleanup failed: {cleanup_error}"
+            if pending_error is not None:
+                print(
+                    "[WARN] "
+                    f"{cleanup_message} (preserving original failure: {pending_error})"
                 )
-            raise
+                if use_woym:
+                    update_woym_generic(
+                        run_woym_path=run_woym_path,
+                        latest_woym_path=latest_woym_path,
+                        current_test_group=current_group,
+                        current_test_method=current_test_method,
+                        event=(
+                            f"{cleanup_message} while preserving original failure: "
+                            f"{pending_error}"
+                        ),
+                    )
+            else:
+                if use_woym:
+                    set_woym_error(
+                        run_woym_path,
+                        latest_woym_path,
+                        cleanup_message,
+                        cleanup_where,
+                    )
+                raise cleanup_error
 
     if stopped_by_user is not None:
         if use_woym:
