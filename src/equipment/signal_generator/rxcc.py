@@ -423,6 +423,7 @@ class RXCC(SignalGeneratorBase):
         url = f"{self.base_url}{path}"
         body: Optional[bytes] = None
         headers = {"Accept": "application/json"}
+        request_details = self._format_request_details(method=method, path=path, payload=payload)
 
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
@@ -444,23 +445,34 @@ class RXCC(SignalGeneratorBase):
                 detail = e.read().decode("utf-8", errors="replace").strip()
 
                 if e.code == 422:
-                    raise ValueError(f"{device_label} request rejected (422): {detail}") from e
+                    raise ValueError(
+                        f"{device_label} request rejected (422) during {request_details}: {detail}"
+                    ) from e
 
                 if e.code == 503:
                     raise RuntimeError(
-                        f"{device_label} service/device unavailable (503): {detail}"
+                        f"{device_label} service/device unavailable (503) during "
+                        f"{request_details}: {detail}"
                     ) from e
 
                 if e.code == 502:
-                    last_exc = RuntimeError(f"{device_label} communication failure (502): {detail}")
+                    last_exc = RuntimeError(
+                        f"{device_label} communication failure (502) during "
+                        f"{request_details}: {detail}"
+                    )
                     if attempt < self.max_retries:
                         continue
                     raise last_exc from e
 
-                raise RuntimeError(f"{device_label} unexpected HTTP error {e.code}: {detail}") from e
+                raise RuntimeError(
+                    f"{device_label} unexpected HTTP error {e.code} during "
+                    f"{request_details}: {detail}"
+                ) from e
 
             except (error.URLError, socket.timeout, TimeoutError) as e:
-                last_exc = RuntimeError(f"{device_label} network/timeout failure: {e}")
+                last_exc = RuntimeError(
+                    f"{device_label} network/timeout failure during {request_details}: {e}"
+                )
                 if attempt < self.max_retries:
                     continue
                 raise last_exc from e
@@ -478,6 +490,21 @@ class RXCC(SignalGeneratorBase):
         if self._device_type == "wireless-pro-rx":
             return "Wireless Pro RX"
         return "RXCC"
+
+    def _format_request_details(
+        self,
+        *,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]],
+    ) -> str:
+        details = f"{method.upper()} {path}"
+        if payload is None:
+            return f"{details} with no payload"
+        return (
+            f"{details} with payload "
+            f"{json.dumps(payload, sort_keys=True, separators=(',', ':'))}"
+        )
 
 
 __all__ = ["RXCC"]

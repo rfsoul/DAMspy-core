@@ -394,7 +394,10 @@ class RXCCTests(unittest.TestCase):
                 _http_error(req.full_url, 422, '{"detail":"unsupported command"}')
             ),
         ) as mocked:
-            with self.assertRaisesRegex(ValueError, "422"):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"422.*POST /api/ctx/tx/high with no payload",
+            ):
                 driver.rf_on()
 
         self.assertEqual(mocked.call_count, 1)
@@ -411,7 +414,10 @@ class RXCCTests(unittest.TestCase):
                 _http_error(req.full_url, 503, '{"detail":"device unavailable"}')
             ),
         ) as mocked:
-            with self.assertRaisesRegex(RuntimeError, "503"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"503.*POST /api/ctx/rx/high with no payload",
+            ):
                 driver.rf_on()
 
         self.assertEqual(mocked.call_count, 1)
@@ -429,7 +435,10 @@ class RXCCTests(unittest.TestCase):
                 _http_error(req.full_url, 502, '{"detail":"device communication failure"}')
             ),
         ) as mocked:
-            with self.assertRaisesRegex(RuntimeError, "502"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"502.*POST /api/rf/start with payload \{\"antenna\":\"main\",\"channel\":1,\"device\":\"rxcc\",\"power\":2\}",
+            ):
                 driver.rf_on()
 
         self.assertEqual(mocked.call_count, 2)

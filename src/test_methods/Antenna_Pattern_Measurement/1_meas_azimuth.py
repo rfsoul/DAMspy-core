@@ -1916,10 +1916,6 @@ def run(params, equip):
                             prompt_bodyworn_tx_in_cradle(
                                 return_from_bodyworn_rf=bodyworn_rf_active
                             )
-                            if bodyworn_rf_active:
-                                print("[TX] Stopping HENDRIX_TX RF before cradle update")
-                                sg.rf_off()
-                                bodyworn_rf_active = False
 
                             current_battery_mv = capture_hendrix_tx_battery_mv(
                                 sg=sg,

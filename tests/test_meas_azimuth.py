@@ -625,6 +625,39 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual([call["channel"] for call in sweep_calls], [7])
         self.assertEqual(equip.signal_generator.rf_off_calls, 0)
 
+    def test_run_bodyworn_keeps_rf_on_during_midrun_cradle_updates(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_tx",
+                    "tx_mode": "bodyworn",
+                    "channels": [7, 8],
+                    "power_levels": [3],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_in_cradle"), \
+                 mock.patch.object(meas_azimuth, "prompt_bodyworn_tx_remove_from_cradle"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual([call["channel"] for call in sweep_calls], [7, 8])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
+        self.assertEqual(
+            equip.signal_generator.rf_off_calls,
+            1,
+            "bodyworn cradle updates should not stop RF mid-run",
+        )
+
     def test_run_passes_ctx_low_from_yaml_to_signal_generator(self):
         equip = _FakeEquipment()
 
