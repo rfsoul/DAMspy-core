@@ -87,6 +87,82 @@ def output_group_token(current_group: str) -> str:
     return sanitize_windows_path(aliases.get(current_group, current_group))
 
 
+def normalize_dut_definition(name: str, raw_dut: dict) -> dict:
+    if not isinstance(raw_dut, dict):
+        raise ValueError(f"DUT definition '{name}' must be a mapping")
+
+    return {
+        "name": str(name),
+        "product": raw_dut.get("product") or "UnknownDUT",
+        "hardware_config": raw_dut.get("hardware_config"),
+        "serial_number": raw_dut.get("serial_number") or "UnknownSerial",
+        "foldername_comment": raw_dut.get("foldername_comment"),
+    }
+
+
+def legacy_dut_definition(params: dict) -> dict:
+    return {
+        "name": "",
+        "product": params.get("DUT_product") or "UnknownDUT",
+        "hardware_config": params.get("DUT_hardware_config"),
+        "serial_number": params.get("DUT_serial_number") or "UnknownSerial",
+        "foldername_comment": params.get("foldername_comment"),
+    }
+
+
+def resolve_selected_dut_definitions(params: dict) -> list[dict]:
+    dut_definitions = params.get("dut_definitions")
+    selected_duts = params.get("DUTS")
+
+    if dut_definitions is None and selected_duts is None:
+        return [legacy_dut_definition(params)]
+
+    if dut_definitions is None:
+        raise ValueError("DUTS requires dut_definitions to be defined")
+    if not isinstance(dut_definitions, dict) or not dut_definitions:
+        raise ValueError("dut_definitions must be a non-empty mapping")
+
+    if selected_duts is None:
+        if len(dut_definitions) == 1:
+            selected_duts = list(dut_definitions.keys())
+        else:
+            raise ValueError(
+                "DUTS must list one or more DUT names when multiple dut_definitions are provided"
+            )
+
+    selected_names = ensure_list(selected_duts)
+    if not selected_names:
+        raise ValueError("DUTS must not be empty")
+
+    resolved = []
+    for raw_name in selected_names:
+        dut_name = str(raw_name)
+        if dut_name not in dut_definitions:
+            raise ValueError(f"DUTS references unknown DUT '{dut_name}'")
+        resolved.append(normalize_dut_definition(dut_name, dut_definitions[dut_name]))
+
+    return resolved
+
+
+def apply_dut_definition(
+    params: dict,
+    dut_definition: dict,
+    *,
+    dut_index: int,
+    total_duts: int,
+) -> dict:
+    resolved = dict(params)
+    resolved["DUT_product"] = dut_definition["product"]
+    resolved["DUT_hardware_config"] = dut_definition.get("hardware_config")
+    resolved["DUT_serial_number"] = dut_definition["serial_number"]
+    resolved["foldername_comment"] = dut_definition.get("foldername_comment")
+
+    resolved["active_dut_name"] = dut_definition.get("name", "")
+    resolved["active_dut_index"] = dut_index
+    resolved["active_dut_total"] = total_duts
+    return resolved
+
+
 def copy_yaml_to_output(yaml_path: Path, outdir: Path):
     if not yaml_path.exists():
         print(f"[WARN] YAML not found for copy: {yaml_path}")
@@ -140,6 +216,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
 
     orientations = first_params.get("orientations", [])
     polarisations = first_params.get("polarisation", [])
+    max_angle_deg = first_params.get("max_angle_deg", [])
     step_deg = first_params.get("step_deg", "unknown")
     sg_cfg = first_params.get("sig_gen_1", {})
     channels = sg_cfg.get("channels", [])
@@ -164,6 +241,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
         list_token("Ch", channels),
         list_token("Pwr", power_levels),
         list_token("Pol", polarisations),
+        list_token("MaxA", max_angle_deg),
         f"Step_{sanitize_windows_path(step_deg)}deg",
         f"RxAnt_{sanitize_windows_path(rx_antenna)}",
     ]
@@ -280,6 +358,338 @@ def build_initial_woym(
     }
 
 
+def execute_selected_dut_run(
+    *,
+    root: Path,
+    current_group: str,
+    test_list: list,
+    postprocs: list,
+    equip_mgr,
+    first_yaml_path: Path,
+    first_params: dict,
+    dut_definition: dict,
+    dut_index: int,
+    total_duts: int,
+    timestamp: str,
+):
+    active_first_params = apply_dut_definition(
+        first_params,
+        dut_definition,
+        dut_index=dut_index,
+        total_duts=total_duts,
+    )
+    folder_name = build_output_folder_name(current_group, timestamp, active_first_params)
+    output_root = root / "DAMspy_logs" / folder_name
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    active_dut_name = active_first_params.get("active_dut_name")
+    active_dut_serial = active_first_params.get("DUT_serial_number")
+    if active_dut_name:
+        print(
+            f"[RUN] Active DUT ({dut_index}/{total_duts}): "
+            f"{active_dut_name} serial {active_dut_serial}"
+        )
+    else:
+        print(f"[RUN] Active DUT serial: {active_dut_serial}")
+    print(f"[LOG] Output directory: {output_root}")
+
+    copy_yaml_to_output(first_yaml_path, output_root)
+
+    use_woym = bool(active_first_params.get("use_woym", False))
+    run_woym_path = None
+    latest_woym_path = None
+    woym = None
+
+    if use_woym:
+        run_woym_path = output_root / "woym.json"
+        latest_woym_path = root / "DAMspy_logs" / "latest_woym.json"
+
+        print(f"[WOYM] Enabled")
+        print(f"[WOYM] Run WOYM path: {run_woym_path}")
+        print(f"[WOYM] Latest WOYM path: {latest_woym_path}")
+
+        woym = build_initial_woym(
+            current_group=current_group,
+            output_root=output_root,
+            run_woym_path=run_woym_path,
+            latest_woym_path=latest_woym_path,
+        )
+        woym["artifacts"]["latest_yaml_path"] = str(output_root / first_yaml_path.name)
+        append_recent_event(woym, "DAMspy run initialised")
+        write_woym(woym, run_woym_path, latest_woym_path)
+    else:
+        print("[WOYM] Disabled by YAML")
+
+    for test_name in test_list:
+        print("\n" + "=" * 100)
+        print(f"➡ Running test: {test_name}")
+        print("=" * 100)
+
+        if use_woym and woym is not None:
+            woym["status"] = "running"
+            woym["current_test_method"] = test_name
+            woym["current_state"] = {
+                "state": "configuring",
+                "message": f"Preparing test method '{test_name}'",
+                "target": {},
+            }
+            append_recent_event(woym, f"Starting test method: {test_name}")
+            write_woym(woym, run_woym_path, latest_woym_path)
+
+        yaml_path = root / "config" / "test_settings_config" / current_group / f"{test_name}.yaml"
+        if not yaml_path.exists():
+            error_msg = f"YAML missing: {yaml_path}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/execute_selected_dut_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        params = load_yaml(yaml_path)
+        if params is None:
+            error_msg = f"YAML unreadable: {yaml_path}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/execute_selected_dut_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        params = apply_dut_definition(
+            params,
+            dut_definition,
+            dut_index=dut_index,
+            total_duts=total_duts,
+        )
+
+        copy_yaml_to_output(yaml_path, output_root)
+
+        if use_woym and woym is not None:
+            woym["artifacts"]["latest_yaml_path"] = str(output_root / yaml_path.name)
+            append_recent_event(woym, f"Copied YAML to run root: {yaml_path.name}")
+            write_woym(woym, run_woym_path, latest_woym_path)
+
+        params["output_dir"] = str(output_root)
+        params["current_group"] = current_group
+        params["current_test_method"] = test_name
+        params["use_woym"] = use_woym
+        params["woym_path"] = str(run_woym_path) if use_woym and run_woym_path else ""
+        params["latest_woym_path"] = str(latest_woym_path) if use_woym and latest_woym_path else ""
+
+        py_path = root / "test_methods" / current_group / f"{test_name}.py"
+        if not py_path.exists():
+            error_msg = f"Script missing: {py_path}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/execute_selected_dut_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            test_module = import_test_module(py_path)
+        except Exception as e:
+            error_msg = f"Could not import {test_name}: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/import_test_module",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        if not hasattr(test_module, "run"):
+            error_msg = f"Test {test_name} missing run() function"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/execute_selected_dut_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            test_module.run(params, equip_mgr)
+            if use_woym and woym is not None:
+                woym["status"] = "running"
+                woym["error"] = {
+                    "status": "none",
+                    "message": "",
+                    "where": "",
+                    "timestamp": "",
+                }
+                woym["current_state"] = {
+                    "state": "idle",
+                    "message": f"Completed test method '{test_name}'",
+                    "target": {},
+                }
+                append_recent_event(woym, f"Completed test method: {test_name}")
+                write_woym(woym, run_woym_path, latest_woym_path)
+        except Exception as e:
+            error_msg = f"Test {test_name} failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": f"{test_name}.run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+
+    if postprocs:
+        print("\n=== Running post-processing ===")
+
+    for pp_name in postprocs:
+        pp_path = root / "test_postprocessing" / current_group / f"{pp_name}.py"
+
+        if not pp_path.exists():
+            error_msg = f"Post-processing script missing: {pp_path}"
+            print(f"[WARN] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            pp_module = import_test_module(pp_path)
+        except Exception as e:
+            error_msg = f"Could not import post-processing {pp_name}: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing_import",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        if not hasattr(pp_module, "run"):
+            error_msg = f"Post-processing {pp_name} missing run()"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            print(f"➡ Post-processing: {pp_name}")
+            pp_module.run(str(output_root))
+            if use_woym and woym is not None:
+                append_recent_event(woym, f"Completed post-processing: {pp_name}")
+                write_woym(woym, run_woym_path, latest_woym_path)
+        except Exception as e:
+            error_msg = f"Post-processing {pp_name} failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+
+    if use_woym and woym is not None and woym["status"] != "error":
+        woym["status"] = "complete"
+        woym["current_state"] = {
+            "state": "complete",
+            "message": "All tests finished",
+            "target": {},
+        }
+        append_recent_event(woym, "DAMspy run complete")
+        write_woym(woym, run_woym_path, latest_woym_path)
+
+
 # ----------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------
@@ -328,6 +738,27 @@ def main():
     first_test_name = test_list[0]
     first_yaml_path = root / "config" / "test_settings_config" / current_group / f"{first_test_name}.yaml"
     first_params = load_yaml(first_yaml_path)
+
+    selected_duts = resolve_selected_dut_definitions(first_params)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    for dut_index, dut_definition in enumerate(selected_duts, start=1):
+        execute_selected_dut_run(
+            root=root,
+            current_group=current_group,
+            test_list=test_list,
+            postprocs=postprocs,
+            equip_mgr=equip_mgr,
+            first_yaml_path=first_yaml_path,
+            first_params=first_params,
+            dut_definition=dut_definition,
+            dut_index=dut_index,
+            total_duts=len(selected_duts),
+            timestamp=timestamp,
+        )
+
+    print("\n=== All tests finished. ===")
+    return
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     folder_name = build_output_folder_name(current_group, timestamp, first_params)

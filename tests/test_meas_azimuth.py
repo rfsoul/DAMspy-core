@@ -34,6 +34,12 @@ spec.loader.exec_module(meas_azimuth)
 
 
 class MeasAzimuthHelpersTests(unittest.TestCase):
+    def test_build_active_dut_display_prefers_name_and_serial(self):
+        self.assertEqual(
+            meas_azimuth.build_active_dut_display("DUT1", "TxRF_4"),
+            "DUT1 serial TxRF_4",
+        )
+
     def test_normalize_sig_gen_device_type_defaults_to_rxcc(self):
         self.assertEqual(meas_azimuth.normalize_sig_gen_device_type(None), "rxcc")
 
@@ -311,6 +317,17 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
 
         self.assertEqual(prompt_manual_change.call_count, 1)
         self.assertIn("channel 40", prompt_manual_change.call_args.args[0])
+
+    def test_prompt_bodyworn_tx_in_cradle_mentions_active_dut(self):
+        stdout = io.StringIO()
+
+        with mock.patch("builtins.input", return_value=""), \
+             mock.patch("sys.stdout", new=stdout):
+            meas_azimuth.prompt_bodyworn_tx_in_cradle(
+                active_dut_display="DUT1 serial TxRF_4",
+            )
+
+        self.assertIn("Place DUT1 serial TxRF_4 in the cradle", stdout.getvalue())
 
 
 class _FakeSignalGenerator:
@@ -1038,9 +1055,7 @@ class MeasAzimuthRunTests(unittest.TestCase):
                 "Set the manual test setup to polarisation 'V'.",
                 "Set the manual test setup to polarisation 'H'.",
                 "Set the manual test setup to polarisation 'V'.",
-                "Set the manual test setup to polarisation 'H'.",
                 "Set the DUT orientation to 'ori3'.",
-                "Set the manual test setup to polarisation 'V'.",
                 "Set the manual test setup to polarisation 'H'.",
             ],
         )

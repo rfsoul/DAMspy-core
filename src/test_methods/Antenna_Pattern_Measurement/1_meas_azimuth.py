@@ -354,9 +354,23 @@ def sanitize_token(value) -> str:
     return str(value).replace(" ", "_").replace("/", "_").replace("\\", "_")
 
 
-def prompt_manual_change(message: str) -> None:
+def build_active_dut_display(active_dut_name, dut_serial_number) -> str:
+    name = str(active_dut_name).strip() if active_dut_name is not None else ""
+    serial = str(dut_serial_number).strip() if dut_serial_number is not None else ""
+    if name and serial:
+        return f"{name} serial {serial}"
+    if serial:
+        return f"serial {serial}"
+    if name:
+        return name
+    return ""
+
+
+def prompt_manual_change(message: str, active_dut_display: str = "") -> None:
     print("\n" + "=" * 90)
     print("[MANUAL ACTION REQUIRED]")
+    if active_dut_display:
+        print(f"Active DUT: {active_dut_display}")
     print(message)
     print("Press Enter when complete...")
     print("=" * 90)
@@ -370,6 +384,7 @@ def prompt_wirepro_manual_setup(
     wirepro_power,
     tx_freq,
     reason,
+    active_dut_display="",
 ) -> None:
     prompt_manual_change(
         "Cannot communicate with Wireless Pro RX.\n"
@@ -377,7 +392,8 @@ def prompt_wirepro_manual_setup(
         f"Ensure antenna is set to '{antenna_label}', "
         f"wirepro_freq is {wirepro_freq} ({tx_freq/1e6:.3f} MHz), "
         f"wirepro_power is {wirepro_power}, and the RF signal is visible "
-        "on the spectrum analyser before continuing."
+        "on the spectrum analyser before continuing.",
+        active_dut_display=active_dut_display,
     )
 
 
@@ -388,9 +404,12 @@ def prompt_bodyworn_tx_update_choice(
     ctx_display,
     tx_freq,
     reason,
+    active_dut_display="",
 ) -> str:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
+    if active_dut_display:
+        print(f"Active DUT: {active_dut_display}")
     print(f"Reason: {reason}")
     print(
         "Choose update method:\n"
@@ -408,33 +427,40 @@ def prompt_bodyworn_tx_update_choice(
             prompt_manual_change(
                 f"Confirm the TX is already operating on channel {channel} "
                 f"({tx_freq/1e6:.3f} MHz), power {power_level}, ctx {ctx_display}, "
-                "and the RF signal is visible on the spectrum analyser."
+                "and the RF signal is visible on the spectrum analyser.",
+                active_dut_display=active_dut_display,
             )
             return "manual"
         print("Invalid choice. Enter 1 for cradle update or 2 for manual confirmation.")
 
 
-def prompt_bodyworn_tx_in_cradle(*, return_from_bodyworn_rf: bool = False) -> None:
+def prompt_bodyworn_tx_in_cradle(
+    *,
+    active_dut_display: str = "",
+    return_from_bodyworn_rf: bool = False,
+) -> None:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
+    device_label = active_dut_display or "the Hendrix TX"
     if return_from_bodyworn_rf:
         print(
-            "Return the Hendrix TX to the cradle so RF can be stopped and "
+            f"Return {device_label} to the cradle so RF can be stopped and "
             "channel/power can be updated."
         )
-        print("Press Enter when the TX is back in the cradle...")
+        print(f"Press Enter when {device_label} is back in the cradle...")
     else:
-        print("Place the Hendrix TX in the cradle so channel/power can be updated.")
-        print("Press Enter when the TX is in the cradle...")
+        print(f"Place {device_label} in the cradle so channel/power can be updated.")
+        print(f"Press Enter when {device_label} is in the cradle...")
     print("=" * 90)
     input()
 
 
-def prompt_bodyworn_tx_remove_from_cradle() -> None:
+def prompt_bodyworn_tx_remove_from_cradle(*, active_dut_display: str = "") -> None:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
-    print("HID update successful. You can now remove the Hendrix TX from the cradle.")
-    print("Press Enter after the TX has been removed...")
+    device_label = active_dut_display or "the Hendrix TX"
+    print(f"HID update successful. You can now remove {device_label} from the cradle.")
+    print(f"Press Enter after {device_label} has been removed...")
     print("=" * 90)
     input()
 
@@ -1384,6 +1410,10 @@ def run(params, equip):
     dut_product = params.get("DUT_product", "Unknown")
     dut_hardware_config = params.get("DUT_hardware_config", "")
     dut_serial_number = params.get("DUT_serial_number", "Unknown")
+    active_dut_name = params.get("active_dut_name", "")
+    active_dut_index = params.get("active_dut_index")
+    active_dut_total = params.get("active_dut_total")
+    active_dut_display = build_active_dut_display(active_dut_name, dut_serial_number)
     foldername_comment = params.get("foldername_comment", "")
     yaml_comment = params.get("yaml_comment", "")
 
@@ -1448,6 +1478,14 @@ def run(params, equip):
     )
 
     print("[CFG] Parsed YAML parameters:")
+    if active_dut_name:
+        if active_dut_index is not None and active_dut_total is not None:
+            print(
+                f"      Active DUT         : {active_dut_name} "
+                f"({active_dut_index}/{active_dut_total})"
+            )
+        else:
+            print(f"      Active DUT         : {active_dut_name}")
     print(f"      DUT product        : {dut_product}")
     if dut_hardware_config:
         print(f"      DUT hw config      : {dut_hardware_config}")
@@ -1566,6 +1604,7 @@ def run(params, equip):
                 wirepro_power=power_level,
                 tx_freq=tx_freq,
                 reason=reason,
+                active_dut_display=active_dut_display,
             )
             wirepro_manual_mode = True
             wireless_pro_rf_active = True
@@ -1592,7 +1631,8 @@ def run(params, equip):
 
             if orientation_change_required:
                 prompt_manual_change(
-                    f"Set the DUT orientation to '{orientation}'."
+                    f"Set the DUT orientation to '{orientation}'.",
+                    active_dut_display=active_dut_display,
                 )
                 confirmed_orientation = orientation
             else:
@@ -1615,7 +1655,8 @@ def run(params, equip):
 
             if polarisation_change_required:
                 prompt_manual_change(
-                    f"Set the manual test setup to polarisation '{polarisation}'."
+                    f"Set the manual test setup to polarisation '{polarisation}'.",
+                    active_dut_display=active_dut_display,
                 )
                 confirmed_polarisation = polarisation
             else:
@@ -1713,6 +1754,9 @@ def run(params, equip):
                         "axis": axis,
                         "sweep_mode": sweep_mode,
                         "manual_setup_order": manual_setup_order,
+                        "active_dut_name": active_dut_name,
+                        "active_dut_index": active_dut_index,
+                        "active_dut_total": active_dut_total,
                         "DUT_product": dut_product,
                         "DUT_hardware_config": dut_hardware_config,
                         "DUT_serial_number": dut_serial_number,
@@ -1914,6 +1958,7 @@ def run(params, equip):
                             nonlocal current_battery_mv
 
                             prompt_bodyworn_tx_in_cradle(
+                                active_dut_display=active_dut_display,
                                 return_from_bodyworn_rf=bodyworn_rf_active
                             )
 
@@ -1965,6 +2010,7 @@ def run(params, equip):
                                     ctx_display=ctx_display,
                                     tx_freq=tx_freq,
                                     reason=update_reason,
+                                    active_dut_display=active_dut_display,
                                 )
                                 bodyworn_manual_mode = update_method == "manual"
                                 if bodyworn_manual_mode:
@@ -2195,7 +2241,10 @@ def run(params, equip):
                         "leaving RF state unchanged at shutdown"
                     )
                 else:
-                    prompt_bodyworn_tx_in_cradle(return_from_bodyworn_rf=True)
+                    prompt_bodyworn_tx_in_cradle(
+                        active_dut_display=active_dut_display,
+                        return_from_bodyworn_rf=True,
+                    )
                     print("[TX] Stopping HENDRIX_TX RF before shutdown")
                     sg.rf_off()
                 bodyworn_rf_active = False
