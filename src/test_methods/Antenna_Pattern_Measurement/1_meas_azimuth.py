@@ -420,7 +420,11 @@ def prompt_bodyworn_tx_update_choice(
     print("=" * 90)
 
     while True:
-        choice = input("Select 1 or 2: ").strip().lower()
+        try:
+            choice = input("Select 1 or 2: ").strip().lower()
+        except EOFError:
+            print("[INFO] No operator input detected; defaulting to cradle update.")
+            return "cradle"
         if choice in {"1", "cradle", "update"}:
             return "cradle"
         if choice in {"2", "manual"}:
@@ -438,7 +442,8 @@ def prompt_bodyworn_tx_in_cradle(
     *,
     active_dut_display: str = "",
     return_from_bodyworn_rf: bool = False,
-) -> None:
+    allow_skip: bool = False,
+) -> bool:
     print("\n" + "=" * 90)
     print("[HENDRIX TX BODYWORN MODE]")
     device_label = active_dut_display or "the Hendrix TX"
@@ -451,8 +456,17 @@ def prompt_bodyworn_tx_in_cradle(
     else:
         print(f"Place {device_label} in the cradle so channel/power can be updated.")
         print(f"Press Enter when {device_label} is in the cradle...")
+    if allow_skip:
+        print("Type 2 to skip this cradle step and leave RF/state unchanged.")
     print("=" * 90)
-    input()
+    try:
+        choice = input().strip().lower()
+    except EOFError:
+        print("[INFO] No operator input detected; continuing with cradle step.")
+        return True
+    if allow_skip and choice in {"2", "skip", "s"}:
+        return False
+    return True
 
 
 def prompt_bodyworn_tx_remove_from_cradle(*, active_dut_display: str = "") -> None:
@@ -463,6 +477,28 @@ def prompt_bodyworn_tx_remove_from_cradle(*, active_dut_display: str = "") -> No
     print(f"Press Enter after {device_label} has been removed...")
     print("=" * 90)
     input()
+
+
+def prompt_rf_stop_override(*, device_label: str, reason: str) -> bool:
+    print("\n" + "=" * 90)
+    print("[RF STOP REQUEST]")
+    print(f"Target: {device_label}")
+    print(f"Reason: {reason}")
+    print("1 = stop RF")
+    print("2 = skip stop and leave RF/state unchanged")
+    print("=" * 90)
+
+    while True:
+        try:
+            choice = input("Select 1 or 2: ").strip().lower()
+        except EOFError:
+            print("[INFO] No operator input detected; defaulting to RF stop.")
+            return True
+        if choice in {"1", "stop"}:
+            return True
+        if choice in {"2", "skip"}:
+            return False
+        print("Invalid choice. Enter 1 to stop RF or 2 to skip.")
 
 
 def prompt_interrupt_menu(current_az: float) -> str:
@@ -1898,22 +1934,37 @@ def run(params, equip):
                             and wireless_pro_rf_active
                             and config_change_required
                         ):
-                            print(
-                                "[TX] Stopping WIRELESS-PRO-RX RF before "
-                                "reconfiguring sweep variant"
-                            )
-                            try:
-                                sg.rf_off()
-                                wireless_pro_rf_active = False
-                            except Exception as e:
-                                if not activate_wirepro_manual_mode(
+                            if prompt_rf_stop_override(
+                                device_label="WIRELESS-PRO-RX",
+                                reason="Reconfiguring sweep variant",
+                            ):
+                                print(
+                                    "[TX] Stopping WIRELESS-PRO-RX RF before "
+                                    "reconfiguring sweep variant"
+                                )
+                                try:
+                                    sg.rf_off()
+                                    wireless_pro_rf_active = False
+                                except Exception as e:
+                                    if not activate_wirepro_manual_mode(
+                                        antenna_label=antenna_label,
+                                        channel=channel,
+                                        power_level=power_level,
+                                        tx_freq=tx_freq,
+                                        reason=str(e),
+                                    ):
+                                        raise
+                            else:
+                                activate_wirepro_manual_mode(
                                     antenna_label=antenna_label,
                                     channel=channel,
                                     power_level=power_level,
                                     tx_freq=tx_freq,
-                                    reason=str(e),
-                                ):
-                                    raise
+                                    reason=(
+                                        "RF stop skipped by operator. "
+                                        "Confirm the requested settings manually."
+                                    ),
+                                )
 
                         if (
                             device_type == "wireless-pro-rx"
@@ -2001,48 +2052,47 @@ def run(params, equip):
                             bodyworn_rf_active = True
                             prompt_bodyworn_tx_remove_from_cradle()
 
-                        if manual_fallback:
-                            update_reason = "Manual fallback is enabled for this run."
-                            while True:
-                                update_method = prompt_bodyworn_tx_update_choice(
-                                    channel=channel,
-                                    power_level=power_level,
-                                    ctx_display=ctx_display,
-                                    tx_freq=tx_freq,
-                                    reason=update_reason,
-                                    active_dut_display=active_dut_display,
-                                )
-                                bodyworn_manual_mode = update_method == "manual"
-                                if bodyworn_manual_mode:
-                                    bodyworn_rf_active = True
-                                    break
+                        update_reason = (
+                            "Manual fallback is enabled for this run."
+                            if manual_fallback
+                            else "Choose cradle update or manual confirmation."
+                        )
+                        while True:
+                            update_method = prompt_bodyworn_tx_update_choice(
+                                channel=channel,
+                                power_level=power_level,
+                                ctx_display=ctx_display,
+                                tx_freq=tx_freq,
+                                reason=update_reason,
+                                active_dut_display=active_dut_display,
+                            )
+                            bodyworn_manual_mode = update_method == "manual"
+                            if bodyworn_manual_mode:
+                                bodyworn_rf_active = True
+                                break
 
-                                try:
-                                    perform_bodyworn_cradle_update()
-                                    bodyworn_config_applied = True
-                                    break
-                                except Exception as e:
-                                    update_reason = str(e)
-                                    print(
-                                        "[WARN] Hendrix TX cradle update failed; "
-                                        "choose 1 to try again or 2 for manual confirmation."
+                            try:
+                                perform_bodyworn_cradle_update()
+                                bodyworn_config_applied = True
+                                break
+                            except Exception as e:
+                                update_reason = str(e)
+                                print(
+                                    "[WARN] Hendrix TX cradle update failed; "
+                                    "choose 1 to try again or 2 for manual confirmation."
+                                )
+                                print(f"[WARN] Reason: {update_reason}")
+                                if use_woym:
+                                    update_woym_generic(
+                                        run_woym_path=run_woym_path,
+                                        latest_woym_path=latest_woym_path,
+                                        current_test_group=current_group,
+                                        current_test_method=current_test_method,
+                                        event=(
+                                            "Hendrix TX cradle update failed; "
+                                            f"manual fallback prompt reopened: {update_reason}"
+                                        ),
                                     )
-                                    print(f"[WARN] Reason: {update_reason}")
-                                    if use_woym:
-                                        update_woym_generic(
-                                            run_woym_path=run_woym_path,
-                                            latest_woym_path=latest_woym_path,
-                                            current_test_group=current_group,
-                                            current_test_method=current_test_method,
-                                            event=(
-                                                "Hendrix TX cradle update failed; "
-                                                f"manual fallback prompt reopened: {update_reason}"
-                                            ),
-                                        )
-                        else:
-                            bodyworn_manual_mode = False
-                            perform_bodyworn_cradle_update()
-                            bodyworn_config_applied = True
 
                     if (
                         ctx_change_required
@@ -2222,8 +2272,17 @@ def run(params, equip):
                         raise
                     finally:
                         if not is_bodyworn_hendrix_tx and device_type != "wireless-pro-rx":
-                            print(f"[TX] Stopping {device_type.upper()} RF")
-                            sg.rf_off()
+                            if prompt_rf_stop_override(
+                                device_label=device_type.upper(),
+                                reason="End of sweep combination",
+                            ):
+                                print(f"[TX] Stopping {device_type.upper()} RF")
+                                sg.rf_off()
+                            else:
+                                print(
+                                    f"[TX] Leaving {device_type.upper()} RF/state "
+                                    "unchanged by operator request"
+                                )
     except SweepStoppedByUser as e:
         stopped_by_user = e
     except Exception as e:
@@ -2241,12 +2300,19 @@ def run(params, equip):
                         "leaving RF state unchanged at shutdown"
                     )
                 else:
-                    prompt_bodyworn_tx_in_cradle(
+                    should_stop_rf = prompt_bodyworn_tx_in_cradle(
                         active_dut_display=active_dut_display,
                         return_from_bodyworn_rf=True,
+                        allow_skip=True,
                     )
-                    print("[TX] Stopping HENDRIX_TX RF before shutdown")
-                    sg.rf_off()
+                    if should_stop_rf is not False:
+                        print("[TX] Stopping HENDRIX_TX RF before shutdown")
+                        sg.rf_off()
+                    else:
+                        print(
+                            "[TX] Leaving HENDRIX_TX RF/state unchanged at shutdown "
+                            "by operator request"
+                        )
                 bodyworn_rf_active = False
             if device_type == "wireless-pro-rx" and wireless_pro_rf_active:
                 if wirepro_manual_mode:
@@ -2255,8 +2321,17 @@ def run(params, equip):
                         "leaving RF state unchanged at shutdown"
                     )
                 else:
-                    print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
-                    sg.rf_off()
+                    if prompt_rf_stop_override(
+                        device_label="WIRELESS-PRO-RX",
+                        reason="Runner shutdown",
+                    ):
+                        print("[TX] Stopping WIRELESS-PRO-RX RF before shutdown")
+                        sg.rf_off()
+                    else:
+                        print(
+                            "[TX] Leaving WIRELESS-PRO-RX RF/state unchanged at shutdown "
+                            "by operator request"
+                        )
                 wireless_pro_rf_active = False
         except Exception as e:
             cleanup_error = e

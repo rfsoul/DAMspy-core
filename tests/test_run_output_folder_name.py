@@ -91,6 +91,24 @@ class RunOutputFolderNameTests(unittest.TestCase):
         self.assertEqual(resolved["active_dut_total"], 4)
         self.assertEqual(resolved["yaml_comment"], "kept")
 
+    def test_build_interleaved_azimuth_param_slices_preserves_channel_order(self):
+        params = {
+            "sig_gen_1": {
+                "device_type": "hendrix_tx",
+                "channels": [40, 0, 80],
+                "power_levels": [10],
+                "CTX": [1],
+            }
+        }
+
+        slices = run_module.build_interleaved_azimuth_param_slices(params)
+
+        self.assertEqual(len(slices), 3)
+        self.assertEqual(
+            [item["sig_gen_1"]["channels"] for item in slices],
+            [[40], [0], [80]],
+        )
+
     def test_optional_foldername_comment_empty_string_is_skipped(self):
         params = {
             "DUT_product": "DUT",

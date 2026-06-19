@@ -65,6 +65,13 @@ def ensure_list(value):
     return [value]
 
 
+def get_first_present(mapping: dict, keys):
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
 def list_token(prefix: str, values):
     values = ensure_list(values)
     if not values:
@@ -161,6 +168,63 @@ def apply_dut_definition(
     resolved["active_dut_index"] = dut_index
     resolved["active_dut_total"] = total_duts
     return resolved
+
+
+def build_interleaved_azimuth_param_slices(params: dict) -> list[dict]:
+    sg_cfg = dict(params.get("sig_gen_1", {}))
+    device_type = str(sg_cfg.get("device_type", "rxcc")).strip().lower()
+
+    if device_type == "wireless-pro-rx":
+        channels = ensure_list(
+            get_first_present(sg_cfg, ("wirepro_freq", "Wpro_freq", "wpro_freq"))
+        )
+        power_levels = ensure_list(
+            get_first_present(sg_cfg, ("wirepro_power", "wirepro_powe", "Wpro_power", "wpro_power"))
+        )
+    else:
+        channels = ensure_list(sg_cfg.get("channels"))
+        power_levels = ensure_list(sg_cfg.get("power_levels"))
+
+    if device_type in {"rxcc", "wireless-pro-rx"}:
+        antenna_values = ensure_list(sg_cfg.get("antennas", sg_cfg.get("antenna")))
+    else:
+        antenna_values = [None]
+
+    if device_type in {"hendrix_tx", "hendrix_rx"}:
+        ctx_values = ensure_list(get_first_present(sg_cfg, ("CTX", "ctx")) or [1])
+    else:
+        ctx_values = [None]
+
+    if not channels or not power_levels:
+        return [dict(params)]
+
+    slices = []
+    for antenna in antenna_values:
+        for power_level in power_levels:
+            for channel in channels:
+                for ctx_value in ctx_values:
+                    slice_params = dict(params)
+                    slice_sg_cfg = dict(sg_cfg)
+
+                    if device_type == "wireless-pro-rx":
+                        slice_sg_cfg["wirepro_freq"] = [channel]
+                        slice_sg_cfg["wirepro_power"] = [power_level]
+                    else:
+                        slice_sg_cfg["channels"] = [channel]
+                        slice_sg_cfg["power_levels"] = [power_level]
+
+                    if antenna is not None:
+                        slice_sg_cfg["antennas"] = [antenna]
+                        slice_sg_cfg["antenna"] = antenna
+
+                    if device_type in {"hendrix_tx", "hendrix_rx"}:
+                        slice_sg_cfg.pop("ctx", None)
+                        slice_sg_cfg["CTX"] = [ctx_value]
+
+                    slice_params["sig_gen_1"] = slice_sg_cfg
+                    slices.append(slice_params)
+
+    return slices or [dict(params)]
 
 
 def copy_yaml_to_output(yaml_path: Path, outdir: Path):
@@ -356,6 +420,191 @@ def build_initial_woym(
         "recent_events": [],
         "updated_at": iso_now(),
     }
+
+
+def initialize_dut_run_context(
+    *,
+    root: Path,
+    current_group: str,
+    first_yaml_path: Path,
+    first_params: dict,
+    dut_definition: dict,
+    dut_index: int,
+    total_duts: int,
+    timestamp: str,
+) -> dict:
+    active_first_params = apply_dut_definition(
+        first_params,
+        dut_definition,
+        dut_index=dut_index,
+        total_duts=total_duts,
+    )
+    folder_name = build_output_folder_name(current_group, timestamp, active_first_params)
+    output_root = root / "DAMspy_logs" / folder_name
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    active_dut_name = active_first_params.get("active_dut_name")
+    active_dut_serial = active_first_params.get("DUT_serial_number")
+    if active_dut_name:
+        print(
+            f"[RUN] Active DUT ({dut_index}/{total_duts}): "
+            f"{active_dut_name} serial {active_dut_serial}"
+        )
+    else:
+        print(f"[RUN] Active DUT serial: {active_dut_serial}")
+    print(f"[LOG] Output directory: {output_root}")
+
+    copy_yaml_to_output(first_yaml_path, output_root)
+
+    use_woym = bool(active_first_params.get("use_woym", False))
+    run_woym_path = None
+    latest_woym_path = None
+    woym = None
+
+    if use_woym:
+        run_woym_path = output_root / "woym.json"
+        latest_woym_path = root / "DAMspy_logs" / "latest_woym.json"
+
+        print(f"[WOYM] Enabled")
+        print(f"[WOYM] Run WOYM path: {run_woym_path}")
+        print(f"[WOYM] Latest WOYM path: {latest_woym_path}")
+
+        woym = build_initial_woym(
+            current_group=current_group,
+            output_root=output_root,
+            run_woym_path=run_woym_path,
+            latest_woym_path=latest_woym_path,
+        )
+        woym["artifacts"]["latest_yaml_path"] = str(output_root / first_yaml_path.name)
+        append_recent_event(woym, "DAMspy run initialised")
+        write_woym(woym, run_woym_path, latest_woym_path)
+    else:
+        print("[WOYM] Disabled by YAML")
+
+    return {
+        "dut_definition": dut_definition,
+        "dut_index": dut_index,
+        "total_duts": total_duts,
+        "output_root": output_root,
+        "use_woym": use_woym,
+        "run_woym_path": run_woym_path,
+        "latest_woym_path": latest_woym_path,
+        "woym": woym,
+    }
+
+
+def run_postprocessing_for_context(
+    *,
+    root: Path,
+    current_group: str,
+    postprocs: list,
+    context: dict,
+):
+    if not postprocs:
+        return
+
+    print("\n=== Running post-processing ===")
+
+    use_woym = context["use_woym"]
+    woym = context["woym"]
+    run_woym_path = context["run_woym_path"]
+    latest_woym_path = context["latest_woym_path"]
+    output_root = context["output_root"]
+
+    for pp_name in postprocs:
+        pp_path = root / "test_postprocessing" / current_group / f"{pp_name}.py"
+
+        if not pp_path.exists():
+            error_msg = f"Post-processing script missing: {pp_path}"
+            print(f"[WARN] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            pp_module = import_test_module(pp_path)
+        except Exception as e:
+            error_msg = f"Could not import post-processing {pp_name}: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing_import",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        if not hasattr(pp_module, "run"):
+            error_msg = f"Post-processing {pp_name} missing run()"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+            continue
+
+        try:
+            print(f"➡ Post-processing: {pp_name}")
+            pp_module.run(str(output_root))
+            if use_woym and woym is not None:
+                append_recent_event(woym, f"Completed post-processing: {pp_name}")
+                write_woym(woym, run_woym_path, latest_woym_path)
+        except Exception as e:
+            error_msg = f"Post-processing {pp_name} failed: {e}"
+            print(f"[ERROR] {error_msg}")
+            if use_woym and woym is not None:
+                append_recent_event(woym, error_msg)
+                woym["status"] = "error"
+                woym["error"] = {
+                    "status": "active",
+                    "message": error_msg,
+                    "where": "run.py/postprocessing_run",
+                    "timestamp": iso_now(),
+                }
+                woym["current_state"] = {
+                    "state": "error",
+                    "message": error_msg,
+                    "target": {},
+                }
+                write_woym(woym, run_woym_path, latest_woym_path)
+
+
+def complete_dut_run_context(context: dict):
+    use_woym = context["use_woym"]
+    woym = context["woym"]
+    run_woym_path = context["run_woym_path"]
+    latest_woym_path = context["latest_woym_path"]
+
+    if use_woym and woym is not None and woym["status"] != "error":
+        woym["status"] = "complete"
+        woym["current_state"] = {
+            "state": "complete",
+            "message": "All tests finished",
+            "target": {},
+        }
+        append_recent_event(woym, "DAMspy run complete")
+        write_woym(woym, run_woym_path, latest_woym_path)
 
 
 def execute_selected_dut_run(
@@ -690,6 +939,158 @@ def execute_selected_dut_run(
         write_woym(woym, run_woym_path, latest_woym_path)
 
 
+def execute_interleaved_multi_dut_runs(
+    *,
+    root: Path,
+    current_group: str,
+    test_list: list,
+    postprocs: list,
+    equip_mgr,
+    first_yaml_path: Path,
+    first_params: dict,
+    selected_duts: list[dict],
+    timestamp: str,
+):
+    contexts = [
+        initialize_dut_run_context(
+            root=root,
+            current_group=current_group,
+            first_yaml_path=first_yaml_path,
+            first_params=first_params,
+            dut_definition=dut_definition,
+            dut_index=dut_index,
+            total_duts=len(selected_duts),
+            timestamp=timestamp,
+        )
+        for dut_index, dut_definition in enumerate(selected_duts, start=1)
+    ]
+
+    for test_name in test_list:
+        yaml_path = root / "config" / "test_settings_config" / current_group / f"{test_name}.yaml"
+        if not yaml_path.exists():
+            raise RuntimeError(f"YAML missing: {yaml_path}")
+
+        base_params = load_yaml(yaml_path)
+        if base_params is None:
+            raise RuntimeError(f"YAML unreadable: {yaml_path}")
+
+        py_path = root / "test_methods" / current_group / f"{test_name}.py"
+        if not py_path.exists():
+            raise RuntimeError(f"Script missing: {py_path}")
+
+        test_module = import_test_module(py_path)
+        if not hasattr(test_module, "run"):
+            raise RuntimeError(f"Test {test_name} missing run() function")
+
+        if test_name == "1_meas_azimuth":
+            param_slices = build_interleaved_azimuth_param_slices(base_params)
+        else:
+            param_slices = [base_params]
+
+        for slice_index, slice_params in enumerate(param_slices, start=1):
+            print("\n" + "=" * 100)
+            print(
+                f"➡ Interleaved test: {test_name} "
+                f"(slice {slice_index}/{len(param_slices)})"
+            )
+            print("=" * 100)
+
+            for context in contexts:
+                use_woym = context["use_woym"]
+                woym = context["woym"]
+                run_woym_path = context["run_woym_path"]
+                latest_woym_path = context["latest_woym_path"]
+                output_root = context["output_root"]
+
+                if use_woym and woym is not None:
+                    woym["status"] = "running"
+                    woym["current_test_method"] = test_name
+                    woym["current_state"] = {
+                        "state": "configuring",
+                        "message": (
+                            f"Preparing test method '{test_name}' "
+                            f"(slice {slice_index}/{len(param_slices)})"
+                        ),
+                        "target": {},
+                    }
+                    append_recent_event(
+                        woym,
+                        f"Starting test method: {test_name} slice {slice_index}/{len(param_slices)}",
+                    )
+                    write_woym(woym, run_woym_path, latest_woym_path)
+
+                params = apply_dut_definition(
+                    slice_params,
+                    context["dut_definition"],
+                    dut_index=context["dut_index"],
+                    total_duts=context["total_duts"],
+                )
+                copy_yaml_to_output(yaml_path, output_root)
+
+                if use_woym and woym is not None:
+                    woym["artifacts"]["latest_yaml_path"] = str(output_root / yaml_path.name)
+                    append_recent_event(woym, f"Copied YAML to run root: {yaml_path.name}")
+                    write_woym(woym, run_woym_path, latest_woym_path)
+
+                params["output_dir"] = str(output_root)
+                params["current_group"] = current_group
+                params["current_test_method"] = test_name
+                params["use_woym"] = use_woym
+                params["woym_path"] = str(run_woym_path) if use_woym and run_woym_path else ""
+                params["latest_woym_path"] = str(latest_woym_path) if use_woym and latest_woym_path else ""
+
+                try:
+                    test_module.run(params, equip_mgr)
+                    if use_woym and woym is not None:
+                        woym["status"] = "running"
+                        woym["error"] = {
+                            "status": "none",
+                            "message": "",
+                            "where": "",
+                            "timestamp": "",
+                        }
+                        woym["current_state"] = {
+                            "state": "idle",
+                            "message": (
+                                f"Completed test method '{test_name}' "
+                                f"(slice {slice_index}/{len(param_slices)})"
+                            ),
+                            "target": {},
+                        }
+                        append_recent_event(
+                            woym,
+                            f"Completed test method: {test_name} slice {slice_index}/{len(param_slices)}",
+                        )
+                        write_woym(woym, run_woym_path, latest_woym_path)
+                except Exception as e:
+                    error_msg = f"Test {test_name} failed: {e}"
+                    print(f"[ERROR] {error_msg}")
+                    if use_woym and woym is not None:
+                        woym["status"] = "error"
+                        woym["error"] = {
+                            "status": "active",
+                            "message": error_msg,
+                            "where": f"{test_name}.run",
+                            "timestamp": iso_now(),
+                        }
+                        woym["current_state"] = {
+                            "state": "error",
+                            "message": error_msg,
+                            "target": {},
+                        }
+                        append_recent_event(woym, error_msg)
+                        write_woym(woym, run_woym_path, latest_woym_path)
+
+    for context in contexts:
+        run_postprocessing_for_context(
+            root=root,
+            current_group=current_group,
+            postprocs=postprocs,
+            context=context,
+        )
+        complete_dut_run_context(context)
+
+
 # ----------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------
@@ -742,7 +1143,19 @@ def main():
     selected_duts = resolve_selected_dut_definitions(first_params)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    for dut_index, dut_definition in enumerate(selected_duts, start=1):
+    if len(selected_duts) > 1:
+        execute_interleaved_multi_dut_runs(
+            root=root,
+            current_group=current_group,
+            test_list=test_list,
+            postprocs=postprocs,
+            equip_mgr=equip_mgr,
+            first_yaml_path=first_yaml_path,
+            first_params=first_params,
+            selected_duts=selected_duts,
+            timestamp=timestamp,
+        )
+    else:
         execute_selected_dut_run(
             root=root,
             current_group=current_group,
@@ -751,9 +1164,9 @@ def main():
             equip_mgr=equip_mgr,
             first_yaml_path=first_yaml_path,
             first_params=first_params,
-            dut_definition=dut_definition,
-            dut_index=dut_index,
-            total_duts=len(selected_duts),
+            dut_definition=selected_duts[0],
+            dut_index=1,
+            total_duts=1,
             timestamp=timestamp,
         )
 

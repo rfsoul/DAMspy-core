@@ -329,6 +329,27 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
 
         self.assertIn("Place DUT1 serial TxRF_4 in the cradle", stdout.getvalue())
 
+    def test_prompt_bodyworn_tx_in_cradle_allows_skip_on_shutdown(self):
+        with mock.patch("builtins.input", return_value="2"), \
+             mock.patch("sys.stdout", new=io.StringIO()):
+            should_continue = meas_azimuth.prompt_bodyworn_tx_in_cradle(
+                active_dut_display="DUT1 serial TxRF_4",
+                return_from_bodyworn_rf=True,
+                allow_skip=True,
+            )
+
+        self.assertFalse(should_continue)
+
+    def test_prompt_rf_stop_override_allows_skip(self):
+        with mock.patch("builtins.input", return_value="2"), \
+             mock.patch("sys.stdout", new=io.StringIO()):
+            should_stop = meas_azimuth.prompt_rf_stop_override(
+                device_label="HENDRIX_TX",
+                reason="Runner shutdown",
+            )
+
+        self.assertFalse(should_stop)
+
 
 class _FakeSignalGenerator:
     def __init__(
