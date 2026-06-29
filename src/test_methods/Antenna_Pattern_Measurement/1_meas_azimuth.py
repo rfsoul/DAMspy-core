@@ -18,6 +18,9 @@ import tempfile
 from datetime import datetime
 from time import sleep, time
 
+import matplotlib
+if hasattr(matplotlib, "use"):
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
@@ -1550,7 +1553,7 @@ def run(params, equip):
     print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
     print(f"      MAX HOLD time      : {hold_s:.2f} s")
-    print(f"      Live plot every    : {format_angle(plot_every_deg, signed=False)}")
+    print(f"      Output plot        : final image only")
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      {frequency_label:<18} : {channels}")
     print(f"      {power_label:<18} : {power_levels}")

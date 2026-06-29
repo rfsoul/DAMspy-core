@@ -18,6 +18,9 @@ import tempfile
 from datetime import datetime
 from time import monotonic, sleep, time
 
+import matplotlib
+if hasattr(matplotlib, "use"):
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
@@ -1248,8 +1251,6 @@ def run_single_azimuth_sweep(
         floor_warning_emitted = False
         last_status_monotonic = None
         last_woym_update_monotonic = None
-        last_plot_angle = None
-
         try:
             if not boresight_only:
                 print(
@@ -1475,17 +1476,6 @@ def run_single_azimuth_sweep(
                         ),
                     )
                     last_woym_update_monotonic = midpoint_monotonic
-
-                if (
-                    plot_every_deg > 0
-                    and (
-                        last_plot_angle is None
-                        or abs(estimated_angle_deg - last_plot_angle) >= plot_every_deg
-                        or elapsed_since_move_start_s >= expected_motion_duration_s
-                    )
-                ):
-                    write_partial_polar_plot(csv_path, plot_png_path)
-                    last_plot_angle = estimated_angle_deg
 
                 if boresight_only or elapsed_since_move_start_s >= expected_motion_duration_s:
                     break
@@ -1775,7 +1765,7 @@ def run(params, equip):
     print(f"      Sweep speed        : {sweep_speed_deg_per_s:.3f} deg/s")
     print(f"      Move-start timeout : {move_start_timeout_s:.2f} s")
     print(f"      Instantaneous read : free-running")
-    print(f"      Live plot every    : {format_angle(plot_every_deg, signed=False)}")
+    print(f"      Output plot        : final image only")
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      {frequency_label:<18} : {channels}")
     print(f"      {power_label:<18} : {power_levels}")
