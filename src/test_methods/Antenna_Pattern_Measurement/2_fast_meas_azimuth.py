@@ -1239,6 +1239,11 @@ def run_single_azimuth_sweep(
                     "or read_peak_median()."
                 )
 
+        prepare_fast_peak_mode = getattr(sa, "prepare_instantaneous_peak_mode", None)
+        if callable(prepare_fast_peak_mode):
+            print("[FAST] Preparing spectrum analyser fast instantaneous peak mode")
+            prepare_fast_peak_mode()
+
         sample_index = 0
         floor_warning_emitted = False
         last_status_monotonic = None

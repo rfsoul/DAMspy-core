@@ -27,6 +27,7 @@ class BB60Spike:
         self._configured_span_hz = None
         self._configured_rbw_hz = None
         self._configured_vbw_hz = None
+        self._instant_peak_mode_prepared = False
 
         # Disable GUI immediately for safe SCPI-only control
         self._send(":DISP:ENAB OFF")
@@ -212,7 +213,31 @@ class BB60Spike:
         self._configured_span_hz = float(span_hz)
         self._configured_rbw_hz = None if rbw_hz is None else float(rbw_hz)
         self._configured_vbw_hz = None if vbw_hz is None else float(vbw_hz)
+        self._instant_peak_mode_prepared = False
         return verified
+
+    def prepare_instantaneous_peak_mode(self, *, throw_away_first_sweep: bool = True):
+        """
+        Prepare Spike once for repeated fast instantaneous peak reads.
+
+        This mirrors the successful standalone timing-test pattern:
+        configure WRITE mode once, optionally discard the first sweep, then
+        keep the hot loop to just INIT/OPC/TRAC:DATA.
+        """
+        if self._configured_center_hz is None or self._configured_span_hz is None:
+            raise RuntimeError("Spike narrowband mode has not been configured.")
+
+        self._send(":INIT:CONT OFF")
+        self._send(":AVER:STAT OFF")
+        self._send(":DISP:TRAC:AVER OFF")
+        self._send(":TRAC:TYPE WRIT")
+        self._send(":TRAC:CLE")
+        self._wait_for_opc()
+
+        self._instant_peak_mode_prepared = True
+
+        if throw_away_first_sweep:
+            self._single_sweep_peak_from_trace_data()
 
 
     def read_peak_maxhold(self, hold_s: float):
@@ -349,11 +374,46 @@ class BB60Spike:
         peak_hz = float(self._query(":CALC:MARK:X?"))
         return peak_hz, peak_dbm
 
+    def _single_sweep_peak_from_trace_data(self):
+        """
+        Perform one sweep and return the peak by reading trace data directly.
+
+        This avoids extra marker queries and matches the standalone timing
+        test that achieved the higher sample rate.
+        """
+        if self._configured_center_hz is None or self._configured_span_hz is None:
+            raise RuntimeError("Spike narrowband mode has not been configured.")
+
+        self._send(":INIT:IMM")
+        self._query("*OPC?")
+
+        raw = self._query(":TRAC:DATA?")
+        amps = [float(x) for x in raw.split(",") if x]
+
+        if not amps:
+            raise RuntimeError("Empty trace from Spike")
+
+        peak_idx = max(range(len(amps)), key=lambda i: amps[i])
+        peak_dbm = amps[peak_idx]
+
+        n = len(amps)
+        if n > 1:
+            bin_hz = self._configured_span_hz / (n - 1)
+        else:
+            bin_hz = 0.0
+
+        start_hz = self._configured_center_hz - self._configured_span_hz / 2.0
+        peak_hz = start_hz + peak_idx * bin_hz
+
+        return peak_hz, peak_dbm
+
     def read_peak_instantaneous(self):
         """
         Perform a single narrowband sweep and return the instantaneous peak.
         """
-        return self._single_sweep_peak()
+        if not self._instant_peak_mode_prepared:
+            self.prepare_instantaneous_peak_mode()
+        return self._single_sweep_peak_from_trace_data()
 
     def read_peak_median(
         self,

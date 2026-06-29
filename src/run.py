@@ -87,7 +87,13 @@ def optional_token(value):
     return text if text else None
 
 
-def output_group_token(current_group: str) -> str:
+def output_group_token(current_group: str, test_name: str | None = None) -> str:
+    if (
+        current_group == "Antenna_Pattern_Measurement"
+        and str(test_name).strip().lower() == "2_fast_meas_azimuth"
+    ):
+        return "Fast-APM"
+
     aliases = {
         "Antenna_Pattern_Measurement": "APM",
     }
@@ -271,7 +277,12 @@ def resolve_runtime_mode(repo_root: Path) -> str:
     return "virtual"
 
 
-def build_output_folder_name(current_group: str, timestamp: str, first_params: dict) -> str:
+def build_output_folder_name(
+    current_group: str,
+    timestamp: str,
+    first_params: dict,
+    test_name: str | None = None,
+) -> str:
     """Build the top-level run folder name from the current test group and first YAML."""
     dut_product = first_params.get("DUT_product") or "UnknownDUT"
     dut_hardware_config = first_params.get("DUT_hardware_config")
@@ -297,7 +308,7 @@ def build_output_folder_name(current_group: str, timestamp: str, first_params: d
     dut_identity = "_".join(part for part in dut_identity_parts if part)
 
     parts = [
-        output_group_token(current_group),
+        output_group_token(current_group, test_name=test_name),
         timestamp,
         dut_identity or "UnknownDUT_UnknownSerial",
         optional_token(foldername_comment),
@@ -439,7 +450,12 @@ def initialize_dut_run_context(
         dut_index=dut_index,
         total_duts=total_duts,
     )
-    folder_name = build_output_folder_name(current_group, timestamp, active_first_params)
+    folder_name = build_output_folder_name(
+        current_group,
+        timestamp,
+        active_first_params,
+        test_name=first_yaml_path.stem,
+    )
     output_root = root / "DAMspy_logs" / folder_name
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -627,7 +643,12 @@ def execute_selected_dut_run(
         dut_index=dut_index,
         total_duts=total_duts,
     )
-    folder_name = build_output_folder_name(current_group, timestamp, active_first_params)
+    folder_name = build_output_folder_name(
+        current_group,
+        timestamp,
+        active_first_params,
+        test_name=first_yaml_path.stem,
+    )
     output_root = root / "DAMspy_logs" / folder_name
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -1174,7 +1195,12 @@ def main():
     return
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    folder_name = build_output_folder_name(current_group, timestamp, first_params)
+    folder_name = build_output_folder_name(
+        current_group,
+        timestamp,
+        first_params,
+        test_name=first_test_name,
+    )
 
     output_root = root / "DAMspy_logs" / folder_name
     output_root.mkdir(parents=True, exist_ok=True)

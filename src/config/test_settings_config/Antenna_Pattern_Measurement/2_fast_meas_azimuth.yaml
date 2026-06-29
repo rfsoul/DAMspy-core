@@ -52,7 +52,7 @@ lowest_level: -80 #dBm
 sig_gen_1:  # rode rxcc device
   device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
   manual_fallback: true
-  #tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
+  tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
   #tx_power: 16 #in dBm
   channels: [40]   # [0, 20, 40, 60, 80]
