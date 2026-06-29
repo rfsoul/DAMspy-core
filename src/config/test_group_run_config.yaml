@@ -16,8 +16,9 @@ Antenna_Pattern_Measurement:
     - spectrum_analyser
     - signal_generator.sig_gen_1
   tests:
-    - 1_meas_azimuth
-    # - 2_polar
+    - 2_fast_meas_azimuth
+    #- 1_meas_azimuth
+
   #test_postprocessing:
   #  - 1_azimuth_polar_plot
 

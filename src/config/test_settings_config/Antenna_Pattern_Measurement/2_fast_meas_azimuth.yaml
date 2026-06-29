@@ -7,11 +7,11 @@ dut_definitions:
 
   DUT2:
     product: "hendrix-tx"
-    hardware_config: "S13_3.75mm_FR4_dremel"
-    serial_number: "TxRF_7_74BCEBD69A101ADB"   #C572DD9C17659DAA
+    hardware_config: "emmc"
+    serial_number: "Tx_RF1_C572DD9C17659DAA"   #C572DD9C17659DAA
     foldername_comment: "bodyworn_0.25s"
 
-DUTS: [DUT1] #[DUT1, DUT2]
+DUTS: [DUT2] #[DUT1, DUT2]
 
 yaml_comment: ""
 orientations: [ori2]  # [ori1, ori2]
@@ -47,17 +47,16 @@ dwell_s: 0
 lowest_level: -80 #dBm
 
 sig_gen_1:  # rode rxcc device
-  device_type: "wireless-pro-rx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
+  device_type: "hendrix_tx"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
   manual_fallback: true
   #tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
   #tx_power: 16 #in dBm
-  #channels: [80, 40, 0]   # [0, 20, 40, 60, 80]
-  wirepro_freq: [50]
-  #power_levels: [10]
-  wirepro_power: [4]
+  channels: [40]   # [0, 20, 40, 60, 80]
+  #wirepro_freq: [50]
+  power_levels: [10]
   #wirepro_power: [4]
-  #CTX: [1]   #not for wirepro
+  CTX: [1]   #not for wirepro
   #wirepro_freq: [50]  # Wireless Pro RX only: 2400 MHz + this MHz value
   #wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
   antennas: ["main"] #["main", "secondary"]
