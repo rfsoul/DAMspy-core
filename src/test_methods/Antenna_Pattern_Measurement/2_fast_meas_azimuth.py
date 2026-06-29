@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# 1_meas_azimuth.py
+# 2_fast_meas_azimuth.py
 #
 # Antenna Pattern Measurement â€“ Azimuth Sweep
 # Multi-condition version:
@@ -16,14 +16,18 @@ import math
 import os
 import tempfile
 from datetime import datetime
-from time import sleep, time
+from time import monotonic, sleep, time
 
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
 VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
 VALID_MANUAL_SETUP_ORDERS = {"outer", "inner"}
+VALID_PATTERN_DIRECTIONS = {"cw", "ccw"}
 DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
+DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S = 3.75
+DEFAULT_FAST_MOVE_START_TIMEOUT_S = 15.0
+DEFAULT_FAST_WOYM_UPDATE_INTERVAL_S = 1.0
 NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
@@ -46,6 +50,15 @@ def format_symmetric_angle(value, decimals: int = 1) -> str:
 def meta_write(path, meta: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
+
+
+def meta_update(path, updates: dict):
+    meta = {}
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    meta.update(updates)
+    meta_write(path, meta)
 
 
 def rxcc_channel_to_frequency_hz(channel: int) -> int:
@@ -139,6 +152,19 @@ def normalize_manual_setup_order(value) -> str:
             f"{sorted(VALID_MANUAL_SETUP_ORDERS)}, got {value!r}"
         )
     return manual_setup_order
+
+
+def normalize_pattern_direction(value) -> str:
+    if value is None:
+        return "cw"
+
+    pattern_direction = str(value).strip().lower()
+    if pattern_direction not in VALID_PATTERN_DIRECTIONS:
+        raise ValueError(
+            "pattern_direction must be one of "
+            f"{sorted(VALID_PATTERN_DIRECTIONS)}, got {value!r}"
+        )
+    return pattern_direction
 
 
 def normalize_hendrix_ctx_level(value) -> str:
@@ -949,6 +975,30 @@ def write_partial_polar_plot(csv_path: str, out_png: str) -> None:
     print(f"[PLOT] Updated partial polar plot -> {out_png}")
 
 
+def build_fast_sweep_geometry(maxa: float, pattern_direction: str) -> dict:
+    magnitude = abs(float(maxa))
+    direction = normalize_pattern_direction(pattern_direction)
+    if direction == "cw":
+        return {
+            "pattern_direction": "CW",
+            "start_angle_deg": magnitude,
+            "stop_angle_deg": -magnitude,
+            "direction_sign": -1.0,
+        }
+    return {
+        "pattern_direction": "CCW",
+        "start_angle_deg": -magnitude,
+        "stop_angle_deg": magnitude,
+        "direction_sign": 1.0,
+    }
+
+
+def clamp_fast_angle(angle_deg: float, start_angle_deg: float, stop_angle_deg: float) -> float:
+    low = min(start_angle_deg, stop_angle_deg)
+    high = max(start_angle_deg, stop_angle_deg)
+    return max(low, min(high, angle_deg))
+
+
 def run_single_azimuth_sweep(
     *,
     pos,
@@ -982,17 +1032,34 @@ def run_single_azimuth_sweep(
     rbw_hz: float,
     vbw_hz: float,
     battery_mv=None,
+    pattern_direction: str = "cw",
+    sweep_speed_deg_per_s: float = DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S,
+    move_start_timeout_s: float = DEFAULT_FAST_MOVE_START_TIMEOUT_S,
 ):
     current_az = 0.0
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
+    sweep_speed_deg_per_s = float(sweep_speed_deg_per_s)
+    if sweep_speed_deg_per_s <= 0:
+        raise ValueError("sweep_speed_deg_per_s must be greater than zero")
+
+    geometry = build_fast_sweep_geometry(maxa, pattern_direction)
+    start_angle_deg = geometry["start_angle_deg"]
+    stop_angle_deg = geometry["stop_angle_deg"]
+    direction_sign = geometry["direction_sign"]
+    direction_label = geometry["pattern_direction"]
 
     if boresight_only:
-        steps = 0
+        start_angle_deg = 0.0
+        stop_angle_deg = 0.0
+        direction_sign = 0.0
         total_points = 1
         maxa = 0.0
+        expected_motion_duration_s = 0.0
     else:
-        steps = int((2 * maxa) / step)
-        total_points = steps + 1
+        sweep_span_deg = abs(stop_angle_deg - start_angle_deg)
+        expected_motion_duration_s = sweep_span_deg / sweep_speed_deg_per_s
+        estimated_total_samples = max(1, int(math.ceil(expected_motion_duration_s * 15.0)))
+        total_points = estimated_total_samples
 
     def move_rel(delta_deg):
         nonlocal current_az
@@ -1070,16 +1137,38 @@ def run_single_azimuth_sweep(
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["azimuth_deg", "rx_peak_dbm", "peak_freq_hz"])
+        writer.writerow(
+            [
+                "azimuth_deg",
+                "rx_peak_dbm",
+                "peak_freq_hz",
+                "measurement_request_timestamp_s",
+                "measurement_response_timestamp_s",
+                "measurement_midpoint_timestamp_s",
+                "elapsed_since_move_start_s",
+                "sweep_direction",
+                "movement_speed_deg_per_s",
+                "start_angle_deg",
+                "stop_angle_deg",
+                "sample_index",
+                "measurement_duration_s",
+                "move_start_method",
+            ]
+        )
 
         print("\n----------------------------------------------------")
-        print("[SWEEP] BEGIN AZIMUTH PATTERN SWEEP")
+        print("[SWEEP] BEGIN FAST AZIMUTH PATTERN SWEEP")
         print("----------------------------------------------------\n")
 
         print("[POS] Software azimuth reference set to 0 deg")
         current_az = 0.0
         if boresight_only:
             print("[MODE] Boresight-only capture: positioner movement disabled")
+        else:
+            print(
+                "[FAST] step_deg is retained for compatibility, "
+                "but capture is free-running during one continuous move."
+            )
 
         if use_woym:
             update_woym_generic(
@@ -1121,7 +1210,7 @@ def run_single_azimuth_sweep(
                     "timestamp": "",
                 },
                 event=(
-                    f"Started sweep {sweep_index}/{total_sweeps}: "
+                    f"Started fast sweep {sweep_index}/{total_sweeps}: "
                     f"ORI={orientation} POL={polarisation} ANT={antenna} "
                     f"PWR={power_level} CH={channel}"
                 ),
@@ -1140,211 +1229,209 @@ def run_single_azimuth_sweep(
                 ),
             )
 
-        idx = 0
-        pre_positioned = False
-        while True:
-            try:
-                if not pre_positioned:
-                    print(f"\n[POS] Pre-positioning to {format_angle(maxa)} (no RF capture)")
-                    move_rel(+maxa)
-                    pre_positioned = True
+        read_peak_once = getattr(sa, "read_peak_instantaneous", None)
+        if read_peak_once is None:
+            if hasattr(sa, "read_peak_median"):
+                read_peak_once = lambda: sa.read_peak_median(sweeps=1)
+            else:
+                raise AttributeError(
+                    "Spectrum analyser must provide read_peak_instantaneous() "
+                    "or read_peak_median()."
+                )
 
-                    print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
-                    print(f"[SWEEP] Total points: {total_points}")
-                    print("[PLOT] Output image will be generated after the final measurement")
+        sample_index = 0
+        floor_warning_emitted = False
+        last_status_monotonic = None
+        last_woym_update_monotonic = None
+        last_plot_angle = None
 
-                while idx < total_points:
-                    az = current_az
+        try:
+            if not boresight_only:
+                print(
+                    f"\n[POS] Pre-positioning to {format_angle(start_angle_deg)} "
+                    "(no RF capture)"
+                )
+                move_rel(start_angle_deg)
 
-                    print("\n----------------------------------------------------")
-                    print(f"[POINT {idx+1:03d}] AZIMUTH = {format_angle(az)}")
-                    print("----------------------------------------------------")
+            current_az = start_angle_deg if not boresight_only else 0.0
 
-                    if use_woym:
-                        update_woym_generic(
-                            run_woym_path=run_woym_path,
-                            latest_woym_path=latest_woym_path,
-                            current_state={
-                                "state": "measuring",
-                                "message": f"Measuring azimuth point at {format_angle(az)}",
-                                "target": {
-                                    "azimuth_deg": az,
-                                },
-                            },
-                            current_sweep=build_current_sweep_dict(
-                                sweep_index=sweep_index,
-                                total_sweeps=total_sweeps,
-                                point_index=idx + 1,
-                                total_points=total_points,
-                                axis="azimuth",
-                                orientation=orientation,
-                                polarisation=polarisation,
-                                antenna=antenna,
-                                ctx=ctx,
-                                power_level=power_level,
-                                channel=channel,
-                                frequency_hz=tx_freq,
-                                battery_mv=battery_mv,
-                            ),
-                            artifacts={
-                                "latest_csv_path": csv_path,
-                                "latest_plot_path": plot_png_path,
-                                "latest_metadata_path": meta_path,
-                                "combo_dir": combo_dir,
-                            },
-                            event=f"Measuring point {idx + 1}/{total_points} at {format_angle(az)}",
-                        )
+            if boresight_only:
+                print("[FAST] Boresight-only mode requested; capturing one instantaneous sample.")
+                move_info = {
+                    "command": "",
+                    "command_timestamp": time(),
+                    "timestamp": time(),
+                    "requested_deg": 0.0,
+                    "requested_steps": 0,
+                    "response": "",
+                    "method": "boresight_only",
+                }
+                motion_start_monotonic = monotonic()
+            else:
+                print(
+                    f"\n[FAST] Continuous sweep: {direction_label} "
+                    f"{format_angle(start_angle_deg)} -> {format_angle(stop_angle_deg)}"
+                )
+                print(
+                    f"[FAST] Estimated movement speed: {sweep_speed_deg_per_s:.3f} deg/s "
+                    f"(expected motion {expected_motion_duration_s:.2f} s)"
+                )
+                print("[FAST] Waiting for controller motion-start response before sampling")
 
-                    print("[SA] Arming per-point MAX HOLD capture")
-                    print(f"[SA]   Integrating for {hold_s:.2f} s")
+                move_info = pos.start_azimuth_move(
+                    stop_angle_deg - start_angle_deg,
+                    motion_start_timeout_s=move_start_timeout_s,
+                )
+                motion_start_monotonic = monotonic()
 
-                    t_meas_start = time()
-                    pk_f_hz, rx_dbm = sa.read_peak_maxhold(hold_s=hold_s)
-                    t_meas_end = time()
+                print(
+                    f"[FAST] Motion start detected via {move_info['method']} at "
+                    f"{move_info['timestamp']:.6f} s"
+                )
+                if move_info.get("response"):
+                    print(f"[FAST] Move response: {move_info['response']}")
 
+            meta_update(
+                meta_path,
+                {
+                    "test_method": "2_fast_meas_azimuth",
+                    "capture_method": {
+                        "type": "continuous_timed_sweep",
+                        "max_hold_seconds": hold_s,
+                        "dwell_seconds": dwell_s,
+                        "live_plot_every_deg": plot_every_deg,
+                        "pattern_direction": direction_label,
+                        "sweep_speed_deg_per_s": sweep_speed_deg_per_s,
+                        "move_start_timeout_s": move_start_timeout_s,
+                    },
+                    "fast_sweep": {
+                        "pattern_direction": direction_label,
+                        "start_angle_deg": start_angle_deg,
+                        "stop_angle_deg": stop_angle_deg,
+                        "direction_sign": direction_sign,
+                        "sweep_speed_deg_per_s": sweep_speed_deg_per_s,
+                        "expected_motion_duration_s": expected_motion_duration_s,
+                        "move_command": move_info.get("command", ""),
+                        "move_command_timestamp_s": move_info.get("command_timestamp"),
+                        "move_start_timestamp_s": move_info.get("timestamp"),
+                        "move_start_method": move_info.get("method"),
+                        "move_start_response": move_info.get("response", ""),
+                    },
+                },
+            )
+
+            print("[FAST] Sampling spectrum analyser as fast as practical while moving")
+
+            while True:
+                request_timestamp_s = time()
+                request_monotonic = monotonic()
+
+                pk_f_hz, rx_dbm = read_peak_once()
+
+                response_timestamp_s = time()
+                response_monotonic = monotonic()
+                measurement_duration_s = response_timestamp_s - request_timestamp_s
+                midpoint_timestamp_s = (request_timestamp_s + response_timestamp_s) / 2.0
+                midpoint_monotonic = (request_monotonic + response_monotonic) / 2.0
+                elapsed_since_move_start_s = max(
+                    0.0,
+                    midpoint_monotonic - motion_start_monotonic,
+                )
+
+                estimated_angle_deg = clamp_fast_angle(
+                    start_angle_deg + direction_sign * sweep_speed_deg_per_s * elapsed_since_move_start_s,
+                    start_angle_deg,
+                    stop_angle_deg,
+                )
+
+                sample_index += 1
+                writer.writerow(
+                    [
+                        f"{estimated_angle_deg:.6f}",
+                        f"{rx_dbm:.6f}",
+                        f"{pk_f_hz:.0f}" if pk_f_hz is not None else "",
+                        f"{request_timestamp_s:.6f}",
+                        f"{response_timestamp_s:.6f}",
+                        f"{midpoint_timestamp_s:.6f}",
+                        f"{elapsed_since_move_start_s:.6f}",
+                        direction_label,
+                        f"{sweep_speed_deg_per_s:.6f}",
+                        f"{start_angle_deg:.6f}",
+                        f"{stop_angle_deg:.6f}",
+                        str(sample_index),
+                        f"{measurement_duration_s:.6f}",
+                        move_info.get("method", ""),
+                    ]
+                )
+                f.flush()
+
+                current_az = estimated_angle_deg
+
+                if lowest_level_dbm is not None and rx_dbm < lowest_level_dbm and not floor_warning_emitted:
                     print(
-                        f"[SA] MAX HOLD complete "
-                        f"({t_meas_end - t_meas_start:.2f} s elapsed)"
+                        f"[WARN] RX level below expected floor: "
+                        f"{rx_dbm:.2f} dBm < {lowest_level_dbm:.2f} dBm"
                     )
+                    floor_warning_emitted = True
 
-                    if lowest_level_dbm is not None and rx_dbm < lowest_level_dbm:
-                        print(
-                            f"[WARN] RX level below expected floor: "
-                            f"{rx_dbm:.2f} dBm < {lowest_level_dbm:.2f} dBm"
-                        )
-
-                    writer.writerow([f"{az:.1f}", f"{rx_dbm:.6f}", f"{pk_f_hz:.0f}"])
-                    f.flush()
-
+                if (
+                    last_status_monotonic is None
+                    or (midpoint_monotonic - last_status_monotonic) >= 1.0
+                    or elapsed_since_move_start_s >= expected_motion_duration_s
+                ):
                     print(
-                        f"[DATA] az {format_angle(az):>10} | "
-                        f"RX = {rx_dbm:7.2f} dBm | "
-                        f"Fpk = {pk_f_hz/1e6:.6f} MHz"
+                        f"[FAST] sample {sample_index:04d} | "
+                        f"az {format_angle(estimated_angle_deg):>10} | "
+                        f"elapsed {elapsed_since_move_start_s:6.2f} s | "
+                        f"RX {rx_dbm:7.2f} dBm | "
+                        f"Fpk {(pk_f_hz / 1e6):.6f} MHz"
                     )
+                    last_status_monotonic = midpoint_monotonic
 
-                    if use_woym:
-                        last_measurement = {
-                            "orientation": orientation,
-                            "polarisation": polarisation,
-                            "antenna": antenna,
-                            "power_level": power_level,
-                            "channel": channel,
-                            "frequency_hz": tx_freq,
-                            "azimuth_deg": az,
-                            "rx_peak_dbm": rx_dbm,
-                            "peak_freq_hz": pk_f_hz,
-                            "timestamp": iso_now(),
-                        }
-                        if ctx is not None:
-                            last_measurement["ctx"] = ctx
-                        if battery_mv is not None:
-                            last_measurement["battery_mv"] = battery_mv
+                if use_woym and (
+                    last_woym_update_monotonic is None
+                    or (midpoint_monotonic - last_woym_update_monotonic) >= DEFAULT_FAST_WOYM_UPDATE_INTERVAL_S
+                    or elapsed_since_move_start_s >= expected_motion_duration_s
+                ):
+                    last_measurement = {
+                        "orientation": orientation,
+                        "polarisation": polarisation,
+                        "antenna": antenna,
+                        "power_level": power_level,
+                        "channel": channel,
+                        "frequency_hz": tx_freq,
+                        "azimuth_deg": estimated_angle_deg,
+                        "rx_peak_dbm": rx_dbm,
+                        "peak_freq_hz": pk_f_hz,
+                        "timestamp": iso_now(),
+                        "measurement_request_timestamp_s": request_timestamp_s,
+                        "measurement_response_timestamp_s": response_timestamp_s,
+                        "measurement_midpoint_timestamp_s": midpoint_timestamp_s,
+                        "elapsed_since_move_start_s": elapsed_since_move_start_s,
+                        "sweep_direction": direction_label,
+                    }
+                    if ctx is not None:
+                        last_measurement["ctx"] = ctx
+                    if battery_mv is not None:
+                        last_measurement["battery_mv"] = battery_mv
 
-                        update_woym_generic(
-                            run_woym_path=run_woym_path,
-                            latest_woym_path=latest_woym_path,
-                            last_measurement=last_measurement,
-                            current_sweep=build_current_sweep_dict(
-                                sweep_index=sweep_index,
-                                total_sweeps=total_sweeps,
-                                point_index=idx + 1,
-                                total_points=total_points,
-                                axis="azimuth",
-                                orientation=orientation,
-                                polarisation=polarisation,
-                                antenna=antenna,
-                                ctx=ctx,
-                                power_level=power_level,
-                                channel=channel,
-                                frequency_hz=tx_freq,
-                                battery_mv=battery_mv,
-                            ),
-                            artifacts={
-                                "latest_csv_path": csv_path,
-                                "latest_plot_path": plot_png_path,
-                                "latest_metadata_path": meta_path,
-                                "combo_dir": combo_dir,
-                            },
-                            event=(
-                                f"Measured az {format_angle(az)} "
-                                f"RX={rx_dbm:.2f} dBm Fpk={pk_f_hz/1e6:.6f} MHz"
-                            ),
-                        )
-
-                        update_woym_azimuth(
-                            run_woym_path=run_woym_path,
-                            latest_woym_path=latest_woym_path,
-                            spectrum_analyser=build_spectrum_analyser_block(
-                                requested_center_hz=tx_freq,
-                                requested_span_hz=span_hz,
-                                requested_rbw_hz=rbw_hz,
-                                requested_vbw_hz=vbw_hz,
-                                last_peak_freq_hz=pk_f_hz,
-                                last_peak_dbm=rx_dbm,
-                            ),
-                        )
-
-                    is_final_point = idx == steps
-
-                    if is_final_point:
-                        if use_woym:
-                            update_woym_generic(
-                                run_woym_path=run_woym_path,
-                                latest_woym_path=latest_woym_path,
-                                current_state={
-                                    "state": "plotting",
-                                    "message": f"Writing output image at {format_angle(az)}",
-                                    "target": {
-                                        "azimuth_deg": az,
-                                    },
-                                },
-                                artifacts={
-                                    "latest_csv_path": csv_path,
-                                    "latest_plot_path": plot_png_path,
-                                    "latest_metadata_path": meta_path,
-                                    "combo_dir": combo_dir,
-                                },
-                                event=f"Writing output image at {format_angle(az)}",
-                            )
-                        write_partial_polar_plot(csv_path, plot_png_path)
-
-                    if az > -maxa:
-                        print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
-                        move_rel(-step)
-
-                    idx += 1
-                break
-            except KeyboardInterrupt:
-                action = prompt_interrupt_menu(current_az)
-                if action == "resume":
-                    print("[INTERRUPT] Resuming test")
-                    continue
-
-                stop_message = "User stopped sweep in current location"
-                if action == "stop_boresight":
-                    try:
-                        return_to_boresight()
-                    except Exception as e:
-                        stop_message = f"User requested boresight return, but move failed: {e}"
-                        print(f"[WARN] {stop_message}")
-                    else:
-                        stop_message = "User stopped sweep after return to boresight"
-
-                if use_woym:
                     update_woym_generic(
                         run_woym_path=run_woym_path,
                         latest_woym_path=latest_woym_path,
                         current_state={
-                            "state": "idle",
-                            "message": stop_message,
+                            "state": "measuring",
+                            "message": (
+                                f"Fast sweep {direction_label} at "
+                                f"{format_angle(estimated_angle_deg)}"
+                            ),
                             "target": {
-                                "azimuth_deg": current_az,
+                                "azimuth_deg": estimated_angle_deg,
                             },
                         },
                         current_sweep=build_current_sweep_dict(
                             sweep_index=sweep_index,
                             total_sweeps=total_sweeps,
-                            point_index=min(idx + 1, total_points),
+                            point_index=sample_index,
                             total_points=total_points,
                             axis="azimuth",
                             orientation=orientation,
@@ -1356,22 +1443,145 @@ def run_single_azimuth_sweep(
                             frequency_hz=tx_freq,
                             battery_mv=battery_mv,
                         ),
+                        last_measurement=last_measurement,
                         artifacts={
                             "latest_csv_path": csv_path,
                             "latest_plot_path": plot_png_path,
                             "latest_metadata_path": meta_path,
                             "combo_dir": combo_dir,
                         },
-                        event=stop_message,
+                        event=(
+                            f"Fast sweep sample {sample_index}: "
+                            f"AZ={format_angle(estimated_angle_deg)} "
+                            f"RX={rx_dbm:.2f} dBm"
+                        ),
                     )
 
-                raise SweepStoppedByUser(action)
+                    update_woym_azimuth(
+                        run_woym_path=run_woym_path,
+                        latest_woym_path=latest_woym_path,
+                        spectrum_analyser=build_spectrum_analyser_block(
+                            requested_center_hz=tx_freq,
+                            requested_span_hz=span_hz,
+                            requested_rbw_hz=rbw_hz,
+                            requested_vbw_hz=vbw_hz,
+                            last_peak_freq_hz=pk_f_hz,
+                            last_peak_dbm=rx_dbm,
+                        ),
+                    )
+                    last_woym_update_monotonic = midpoint_monotonic
 
-        print("\n[POS] Sweep complete - returning to start position")
-        move_rel(+maxa)
+                if (
+                    plot_every_deg > 0
+                    and (
+                        last_plot_angle is None
+                        or abs(estimated_angle_deg - last_plot_angle) >= plot_every_deg
+                        or elapsed_since_move_start_s >= expected_motion_duration_s
+                    )
+                ):
+                    write_partial_polar_plot(csv_path, plot_png_path)
+                    last_plot_angle = estimated_angle_deg
 
-        current_az = 0.0
-        print("[POS] Software azimuth reset to 0 deg")
+                if boresight_only or elapsed_since_move_start_s >= expected_motion_duration_s:
+                    break
+
+        except KeyboardInterrupt:
+            if not boresight_only:
+                print(
+                    "[WARN] Interrupt requested during fast sweep; "
+                    "waiting for the continuous move to finish before handling it."
+                )
+                try:
+                    pos.wait_until_stopped()
+                except Exception as e:
+                    print(f"[WARN] Positioner stop wait failed during interrupt handling: {e}")
+                current_az = stop_angle_deg
+
+            action = prompt_interrupt_menu(current_az)
+            if action == "resume":
+                print("[INTERRUPT] Fast sweep cannot resume mid-move; returning to boresight and stopping.")
+                action = "stop_boresight"
+
+            stop_message = "User stopped fast sweep in current location"
+            if action == "stop_boresight":
+                try:
+                    return_to_boresight()
+                except Exception as e:
+                    stop_message = f"User requested boresight return, but move failed: {e}"
+                    print(f"[WARN] {stop_message}")
+                else:
+                    stop_message = "User stopped fast sweep after return to boresight"
+
+            if use_woym:
+                update_woym_generic(
+                    run_woym_path=run_woym_path,
+                    latest_woym_path=latest_woym_path,
+                    current_state={
+                        "state": "idle",
+                        "message": stop_message,
+                        "target": {
+                            "azimuth_deg": current_az,
+                        },
+                    },
+                    current_sweep=build_current_sweep_dict(
+                        sweep_index=sweep_index,
+                        total_sweeps=total_sweeps,
+                        point_index=sample_index,
+                        total_points=total_points,
+                        axis="azimuth",
+                        orientation=orientation,
+                        polarisation=polarisation,
+                        antenna=antenna,
+                        ctx=ctx,
+                        power_level=power_level,
+                        channel=channel,
+                        frequency_hz=tx_freq,
+                        battery_mv=battery_mv,
+                    ),
+                    artifacts={
+                        "latest_csv_path": csv_path,
+                        "latest_plot_path": plot_png_path,
+                        "latest_metadata_path": meta_path,
+                        "combo_dir": combo_dir,
+                    },
+                    event=stop_message,
+                )
+
+            raise SweepStoppedByUser(action)
+
+        if not boresight_only:
+            actual_stop_angle = pos.wait_until_stopped()
+            current_az = stop_angle_deg
+        else:
+            actual_stop_angle = current_az
+
+        write_partial_polar_plot(csv_path, plot_png_path)
+
+        meta_update(
+            meta_path,
+            {
+                "fast_sweep": {
+                    "pattern_direction": direction_label,
+                    "start_angle_deg": start_angle_deg,
+                    "stop_angle_deg": stop_angle_deg,
+                    "direction_sign": direction_sign,
+                    "sweep_speed_deg_per_s": sweep_speed_deg_per_s,
+                    "expected_motion_duration_s": expected_motion_duration_s,
+                    "move_command": move_info.get("command", ""),
+                    "move_command_timestamp_s": move_info.get("command_timestamp"),
+                    "move_start_timestamp_s": move_info.get("timestamp"),
+                    "move_start_method": move_info.get("method"),
+                    "move_start_response": move_info.get("response", ""),
+                    "measured_sample_count": sample_index,
+                    "final_estimated_angle_deg": current_az,
+                    "final_positioner_angle_deg": actual_stop_angle,
+                }
+            },
+        )
+
+        if not boresight_only:
+            print("\n[POS] Sweep complete - returning to boresight")
+            return_to_boresight()
 
         if use_woym:
             update_woym_generic(
@@ -1380,7 +1590,7 @@ def run_single_azimuth_sweep(
                 current_state={
                     "state": "idle",
                     "message": (
-                        f"Completed sweep {sweep_index}/{total_sweeps} "
+                        f"Completed fast sweep {sweep_index}/{total_sweeps} "
                         f"for ORI={orientation} POL={polarisation} ANT={antenna} "
                         f"PWR={power_level} CH={channel}"
                     ),
@@ -1389,7 +1599,7 @@ def run_single_azimuth_sweep(
                 current_sweep=build_current_sweep_dict(
                     sweep_index=sweep_index,
                     total_sweeps=total_sweeps,
-                    point_index=total_points,
+                    point_index=sample_index,
                     total_points=total_points,
                     axis="azimuth",
                     orientation=orientation,
@@ -1408,7 +1618,7 @@ def run_single_azimuth_sweep(
                     "combo_dir": combo_dir,
                 },
                 event=(
-                    f"Completed sweep {sweep_index}/{total_sweeps}: "
+                    f"Completed fast sweep {sweep_index}/{total_sweeps}: "
                     f"ORI={orientation} POL={polarisation} ANT={antenna} "
                     f"PWR={power_level} CH={channel}"
                 ),
@@ -1418,7 +1628,7 @@ def run_single_azimuth_sweep(
 def run(params, equip):
     t_start = time()
     print("\n====================================================")
-    print("[1_meas_azimuth] STARTING AZIMUTH PATTERN MEASUREMENT")
+    print("[2_fast_meas_azimuth] STARTING FAST AZIMUTH PATTERN MEASUREMENT")
     print("====================================================\n")
 
     # ---------------- Equipment ----------------
@@ -1433,7 +1643,7 @@ def run(params, equip):
     run_woym_path = params.get("woym_path", "")
     latest_woym_path = params.get("latest_woym_path", "")
     current_group = params.get("current_group", "")
-    current_test_method = params.get("current_test_method", "1_meas_azimuth")
+    current_test_method = params.get("current_test_method", "2_fast_meas_azimuth")
 
     # ---------------- YAML parameters ----------------
     dut_product = params.get("DUT_product", "Unknown")
@@ -1458,6 +1668,13 @@ def run(params, equip):
     height_m = params.get("height_m", None)
     lowest_level_dbm = params.get("lowest_level", None)
     plot_every_deg = float(params.get("live_plot_every_deg", 20.0))
+    pattern_direction = normalize_pattern_direction(params.get("pattern_direction", "cw"))
+    sweep_speed_deg_per_s = float(
+        params.get("sweep_speed_deg_per_s", DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S)
+    )
+    move_start_timeout_s = float(
+        params.get("move_start_timeout_s", DEFAULT_FAST_MOVE_START_TIMEOUT_S)
+    )
     orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
 
@@ -1549,7 +1766,10 @@ def run(params, equip):
     print(f"      Step size          : {format_angle(step, signed=False)}")
     print(f"      Height             : {height_m}")
     print(f"      Dwell time         : {dwell_s:.2f} s")
-    print(f"      MAX HOLD time      : {hold_s:.2f} s")
+    print(f"      Pattern direction  : {pattern_direction.upper()}")
+    print(f"      Sweep speed        : {sweep_speed_deg_per_s:.3f} deg/s")
+    print(f"      Move-start timeout : {move_start_timeout_s:.2f} s")
+    print(f"      Instantaneous read : free-running")
     print(f"      Live plot every    : {format_angle(plot_every_deg, signed=False)}")
     print(f"      Total sweeps       : {total_sweeps}")
     print(f"      {frequency_label:<18} : {channels}")
@@ -1616,7 +1836,7 @@ def run(params, equip):
         confirmed_orientation = None
         confirmed_polarisation = None
 
-        measurement_dir = os.path.join(outdir, "1_meas_azimuth")
+        measurement_dir = os.path.join(outdir, "2_fast_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
 
         def activate_wirepro_manual_mode(*, antenna_label, channel, power_level, tx_freq, reason):
@@ -1778,7 +1998,7 @@ def run(params, equip):
                     plot_png_path = os.path.join(combo_dir, "pattern_azimuth_EEmax.png")
 
                     combo_meta = {
-                        "test_method": "1_meas_azimuth",
+                        "test_method": "2_fast_meas_azimuth",
                         "measurement": "Azimuth Pattern Measurement",
                         "axis": axis,
                         "sweep_mode": sweep_mode,
@@ -1816,10 +2036,12 @@ def run(params, equip):
                             "vbw_hz": vbw_hz,
                         },
                         "capture_method": {
-                            "type": "per_point_max_hold",
-                            "max_hold_seconds": hold_s,
+                            "type": "continuous_timed_sweep",
                             "dwell_seconds": dwell_s,
                             "live_plot_every_deg": plot_every_deg,
+                            "pattern_direction": pattern_direction.upper(),
+                            "sweep_speed_deg_per_s": sweep_speed_deg_per_s,
+                            "move_start_timeout_s": move_start_timeout_s,
                         },
                         "limits": {
                             "lowest_level_dbm": lowest_level_dbm
@@ -2251,6 +2473,9 @@ def run(params, equip):
                             rbw_hz=rbw_hz,
                             vbw_hz=vbw_hz,
                             battery_mv=battery_mv,
+                            pattern_direction=pattern_direction,
+                            sweep_speed_deg_per_s=sweep_speed_deg_per_s,
+                            move_start_timeout_s=move_start_timeout_s,
                         )
                     except SweepStoppedByUser:
                         raise
@@ -2260,7 +2485,7 @@ def run(params, equip):
                                 run_woym_path,
                                 latest_woym_path,
                                 f"Azimuth sweep failed: {e}",
-                                "1_meas_azimuth.run_single_azimuth_sweep",
+                                "2_fast_meas_azimuth.run_single_azimuth_sweep",
                             )
                         raise
                     finally:
@@ -2283,7 +2508,7 @@ def run(params, equip):
         raise
     finally:
         cleanup_error = None
-        cleanup_where = "1_meas_azimuth.run/finally"
+        cleanup_where = "2_fast_meas_azimuth.run/finally"
 
         try:
             if is_bodyworn_hendrix_tx and bodyworn_rf_active:
@@ -2383,8 +2608,8 @@ def run(params, equip):
             )
 
         print("\n====================================================")
-        print("[1_meas_azimuth] STOPPED BY USER")
-        print(f"[1_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
+        print("[2_fast_meas_azimuth] STOPPED BY USER")
+        print(f"[2_fast_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
         print("====================================================\n")
         return
 
@@ -2401,6 +2626,6 @@ def run(params, equip):
         )
 
     print("\n====================================================")
-    print("[1_meas_azimuth] COMPLETE")
-    print(f"[1_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
+    print("[2_fast_meas_azimuth] COMPLETE")
+    print(f"[2_fast_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
     print("====================================================\n")

@@ -336,27 +336,24 @@ class BB60Spike:
         """
         Perform one sweep and return (peak_freq_hz, peak_dbm).
         """
+        if self._configured_center_hz is None or self._configured_span_hz is None:
+            raise RuntimeError("Spike narrowband mode has not been configured.")
+
+        self._send(":INIT:CONT OFF")
+        self._send(":TRAC:TYPE WRIT")
         self._send(":INIT:IMM")
         self._query("*OPC?")
 
-        raw = self._query(":TRAC:DATA?")
-        amps = [float(x) for x in raw.split(",") if x]
-
-        if not amps:
-            raise RuntimeError("Empty trace from Spike")
-
-        peak_idx = max(range(len(amps)), key=lambda i: amps[i])
-        peak_dbm = amps[peak_idx]
-
-        cf = float(self._query(":FREQ:CENT?"))
-        sp = float(self._query(":FREQ:SPAN?"))
-        n  = len(amps)
-
-        bin_hz = sp / (n - 1) if n > 1 else 0.0
-        start_hz = cf - sp / 2.0
-        peak_hz = start_hz + peak_idx * bin_hz
-
+        self._send(":CALC:MARK:MAX")
+        peak_dbm = float(self._query(":CALC:MARK:Y?"))
+        peak_hz = float(self._query(":CALC:MARK:X?"))
         return peak_hz, peak_dbm
+
+    def read_peak_instantaneous(self):
+        """
+        Perform a single narrowband sweep and return the instantaneous peak.
+        """
+        return self._single_sweep_peak()
 
     def read_peak_median(
         self,
