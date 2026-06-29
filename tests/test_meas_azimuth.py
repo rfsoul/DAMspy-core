@@ -500,6 +500,83 @@ class MeasAzimuthRunTests(unittest.TestCase):
             "rx_path": {},
         }
 
+    def test_run_single_azimuth_sweep_writes_output_image_once_at_final_point(self):
+        class FakePositioner:
+            def __init__(self):
+                self.moves = []
+
+            def go_azimuth(self, delta_deg):
+                self.moves.append(delta_deg)
+
+        class FakeSpectrumAnalyser:
+            def __init__(self):
+                self.calls = []
+                self.results = iter(
+                    [
+                        (2_400_000_000, -30.0),
+                        (2_400_000_100, -29.5),
+                        (2_400_000_200, -29.0),
+                        (2_400_000_300, -28.5),
+                        (2_400_000_400, -28.0),
+                    ]
+                )
+
+            def read_peak_maxhold(self, hold_s):
+                self.calls.append(hold_s)
+                return next(self.results)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = os.path.join(tmpdir, "pattern_azimuth.csv")
+            plot_png_path = os.path.join(tmpdir, "pattern_azimuth_EEmax.png")
+            meta_path = os.path.join(tmpdir, "metadata.json")
+
+            pos = FakePositioner()
+            sa = FakeSpectrumAnalyser()
+
+            with mock.patch.object(meas_azimuth, "sleep"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "write_partial_polar_plot",
+                 ) as write_plot, \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run_single_azimuth_sweep(
+                    pos=pos,
+                    sa=sa,
+                    csv_path=csv_path,
+                    plot_png_path=plot_png_path,
+                    run_woym_path="",
+                    latest_woym_path="",
+                    use_woym=False,
+                    current_group="Antenna_Pattern_Measurement",
+                    current_test_method="1_meas_azimuth",
+                    orientation="upright",
+                    polarisation="V",
+                    antenna="main",
+                    ctx=None,
+                    power_level=0,
+                    channel=78,
+                    tx_freq=2_478_000_000,
+                    sweep_index=1,
+                    total_sweeps=1,
+                    sweep_mode="full",
+                    maxa=2.0,
+                    step=1.0,
+                    dwell_s=0.0,
+                    hold_s=0.01,
+                    lowest_level_dbm=None,
+                    plot_every_deg=0.5,
+                    combo_dir=tmpdir,
+                    meta_path=meta_path,
+                    span_hz=10_000,
+                    rbw_hz=1_000,
+                    vbw_hz=1_000,
+                    battery_mv=None,
+                )
+
+        self.assertEqual(len(sa.calls), 5)
+        self.assertEqual(write_plot.call_count, 1)
+        self.assertEqual(write_plot.call_args.args, (csv_path, plot_png_path))
+
     def test_run_bodyworn_captures_battery_before_remove_prompt(self):
         events = []
         equip = _FakeEquipment(event_log=events)

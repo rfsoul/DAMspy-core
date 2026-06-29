@@ -984,7 +984,6 @@ def run_single_azimuth_sweep(
     battery_mv=None,
 ):
     current_az = 0.0
-    last_plot_az = None
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
 
     if boresight_only:
@@ -1152,7 +1151,7 @@ def run_single_azimuth_sweep(
 
                     print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
                     print(f"[SWEEP] Total points: {total_points}")
-                    print(f"[PLOT] Live plot update threshold: {format_angle(plot_every_deg, signed=False)}")
+                    print("[PLOT] Output image will be generated after the final measurement")
 
                 while idx < total_points:
                     az = current_az
@@ -1285,21 +1284,16 @@ def run_single_azimuth_sweep(
                             ),
                         )
 
-                    is_first_point = last_plot_az is None
-                    moved_enough = (
-                        last_plot_az is not None
-                        and abs(az - last_plot_az) >= plot_every_deg
-                    )
                     is_final_point = idx == steps
 
-                    if is_first_point or moved_enough or is_final_point:
+                    if is_final_point:
                         if use_woym:
                             update_woym_generic(
                                 run_woym_path=run_woym_path,
                                 latest_woym_path=latest_woym_path,
                                 current_state={
                                     "state": "plotting",
-                                    "message": f"Updating live plot at {format_angle(az)}",
+                                    "message": f"Writing output image at {format_angle(az)}",
                                     "target": {
                                         "azimuth_deg": az,
                                     },
@@ -1310,10 +1304,9 @@ def run_single_azimuth_sweep(
                                     "latest_metadata_path": meta_path,
                                     "combo_dir": combo_dir,
                                 },
-                                event=f"Updating live plot at {format_angle(az)}",
+                                event=f"Writing output image at {format_angle(az)}",
                             )
                         write_partial_polar_plot(csv_path, plot_png_path)
-                        last_plot_az = az
 
                     if az > -maxa:
                         print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
