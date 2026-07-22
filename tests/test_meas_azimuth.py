@@ -92,6 +92,20 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
             [{"value": None, "label": "n/a", "token": "na"}],
         )
 
+    def test_resolve_sig_gen_sweep_config_accepts_usb_disconnected_for_rxcc(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "rxcc",
+                "tx_mode": "usb_disconnected",
+                "channels": [0],
+                "power_levels": [10],
+                "antennas": ["main"],
+            }
+        )
+
+        self.assertEqual(config["device_type"], "rxcc")
+        self.assertEqual(config["tx_mode"], "usb_disconnected")
+
     def test_resolve_sig_gen_sweep_config_accepts_legacy_bodyworn_alias(self):
         config = meas_azimuth.resolve_sig_gen_sweep_config(
             {
@@ -784,6 +798,56 @@ class MeasAzimuthRunTests(unittest.TestCase):
             1,
             "bodyworn cradle updates should not stop RF mid-run",
         )
+
+    def test_run_rxcc_usb_disconnected_uses_usb_update_flow(self):
+        equip = _FakeEquipment()
+        sweep_calls = []
+        usb_connect_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "rxcc",
+                    "tx_mode": "usb_disconnected",
+                    "channels": [7, 8],
+                    "power_levels": [3],
+                    "antennas": ["main"],
+                },
+            )
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "prompt_rxcc_update_choice",
+                     return_value="connect",
+                 ) as prompt_update_choice, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "prompt_rxcc_usb_connect",
+                     side_effect=lambda **kwargs: usb_connect_calls.append(kwargs) or True,
+                 ) as prompt_usb_connect, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "prompt_rxcc_usb_disconnect",
+                 ) as prompt_usb_disconnect, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs),
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                meas_azimuth.run(params, equip)
+
+        self.assertEqual(prompt_update_choice.call_count, 2)
+        self.assertEqual(prompt_usb_connect.call_count, 3)
+        self.assertEqual(prompt_usb_disconnect.call_count, 2)
+        self.assertEqual([call["channel"] for call in sweep_calls], [7, 8])
+        self.assertEqual(equip.signal_generator.antennas, ["main"])
+        self.assertEqual(equip.signal_generator.power_levels, [3])
+        self.assertEqual(equip.signal_generator.channels, [7, 8])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
+        self.assertTrue(usb_connect_calls[-1]["return_from_rf"])
 
     def test_run_passes_ctx_low_from_yaml_to_signal_generator(self):
         equip = _FakeEquipment()

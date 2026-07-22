@@ -218,16 +218,16 @@ def resolve_sig_gen_sweep_config(sg_cfg: dict) -> dict:
     tx_mode = None
     ctx_levels = [None]
 
-    if tx_mode_raw is not None and device_type not in {"hendrix_tx", "wireless-pro-rx"}:
+    if tx_mode_raw is not None and device_type not in {"rxcc", "hendrix_tx", "wireless-pro-rx"}:
         raise ValueError(
             "sig_gen_1.tx_mode is only supported for device_type "
-            "'hendrix_tx' or 'wireless-pro-rx'"
+            "'rxcc', 'hendrix_tx', or 'wireless-pro-rx'"
         )
     if ctx_raw is not None and device_type not in {"hendrix_tx", "hendrix_rx"}:
         raise ValueError(
             "sig_gen_1.ctx is only supported for device_type 'hendrix_tx' or 'hendrix_rx'"
         )
-    if device_type == "hendrix_tx":
+    if device_type in {"rxcc", "hendrix_tx"}:
         tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
     elif device_type == "wireless-pro-rx" and tx_mode_raw is not None:
         tx_mode = normalize_hendrix_tx_mode(tx_mode_raw)
@@ -484,6 +484,89 @@ def prompt_bodyworn_tx_remove_from_cradle(*, active_dut_display: str = "") -> No
     device_label = active_dut_display or "the Hendrix TX"
     print(f"HID update successful. You can now remove {device_label} from the cradle.")
     print(f"Press Enter after {device_label} has been removed...")
+    print("=" * 90)
+    input()
+
+
+def prompt_rxcc_update_choice(
+    *,
+    antenna_label,
+    channel,
+    power_level,
+    tx_freq,
+    reason,
+    active_dut_display="",
+) -> str:
+    print("\n" + "=" * 90)
+    print("[RXCC MANUAL SETUP]")
+    if active_dut_display:
+        print(f"Active DUT: {active_dut_display}")
+    print(f"Reason: {reason}")
+    print(
+        "Choose update method:\n"
+        "  [1] Connect the RXCC over USB so DAMspy can update antenna/channel/power\n"
+        f"  [2] Confirm the RXCC is already operating on antenna '{antenna_label}', "
+        f"channel {channel} ({tx_freq/1e6:.3f} MHz), power {power_level}"
+    )
+    print("=" * 90)
+
+    while True:
+        try:
+            choice = input("Select 1 or 2: ").strip().lower()
+        except EOFError:
+            print("[INFO] No operator input detected; defaulting to USB update.")
+            return "connect"
+        if choice in {"1", "connect", "usb", "update"}:
+            return "connect"
+        if choice in {"2", "manual"}:
+            prompt_manual_change(
+                f"Confirm the RXCC is already operating on antenna '{antenna_label}', "
+                f"channel {channel} ({tx_freq/1e6:.3f} MHz), power {power_level}, "
+                "and the RF signal is visible on the spectrum analyser.",
+                active_dut_display=active_dut_display,
+            )
+            return "manual"
+        print("Invalid choice. Enter 1 for USB update or 2 for manual confirmation.")
+
+
+def prompt_rxcc_usb_connect(
+    *,
+    active_dut_display: str = "",
+    return_from_rf: bool = False,
+    allow_skip: bool = False,
+) -> bool:
+    print("\n" + "=" * 90)
+    print("[RXCC MANUAL SETUP]")
+    device_label = active_dut_display or "the RXCC"
+    if return_from_rf:
+        print(
+            f"Reconnect {device_label} over USB so RF can be stopped and "
+            "settings can be updated."
+        )
+    else:
+        print(
+            f"Connect {device_label} over USB so antenna/channel/power can be updated."
+        )
+    print(f"Press Enter when {device_label} is connected over USB...")
+    if allow_skip:
+        print("Type 2 to skip this USB step and leave RF/state unchanged.")
+    print("=" * 90)
+    try:
+        choice = input().strip().lower()
+    except EOFError:
+        print("[INFO] No operator input detected; continuing with USB step.")
+        return True
+    if allow_skip and choice in {"2", "skip", "s"}:
+        return False
+    return True
+
+
+def prompt_rxcc_usb_disconnect(*, active_dut_display: str = "") -> None:
+    print("\n" + "=" * 90)
+    print("[RXCC MANUAL SETUP]")
+    device_label = active_dut_display or "the RXCC"
+    print(f"Update successful. You can now disconnect {device_label} from USB.")
+    print(f"Press Enter after {device_label} has been disconnected...")
     print("=" * 90)
     input()
 
@@ -1481,9 +1564,13 @@ def run(params, equip):
     is_bodyworn_hendrix_tx = (
         device_type == "hendrix_tx" and tx_mode == "usb_disconnected"
     )
+    is_usb_disconnected_rxcc = (
+        device_type == "rxcc" and tx_mode == "usb_disconnected"
+    )
+    is_manual_rf_setup_mode = is_bodyworn_hendrix_tx or is_usb_disconnected_rxcc
     raw_manual_setup_order = params.get("manual_setup_order")
     if raw_manual_setup_order is None:
-        manual_setup_order = "inner" if is_bodyworn_hendrix_tx else "outer"
+        manual_setup_order = "inner" if is_manual_rf_setup_mode else "outer"
     else:
         manual_setup_order = normalize_manual_setup_order(raw_manual_setup_order)
     channels = sg_sweep_cfg["channels"]
@@ -2000,50 +2087,62 @@ def run(params, equip):
                                     reason=str(e),
                                 ):
                                     raise
-                        elif antenna is not None and antenna_change_required:
+                        elif (
+                            antenna is not None
+                            and antenna_change_required
+                            and not is_usb_disconnected_rxcc
+                        ):
                             sg.set_antenna(antenna)
 
                     bodyworn_config_applied = False
 
-                    if is_bodyworn_hendrix_tx and config_change_required:
+                    if is_manual_rf_setup_mode and config_change_required:
                         def perform_bodyworn_cradle_update():
                             nonlocal bodyworn_rf_active
                             nonlocal current_battery_mv
 
-                            prompt_bodyworn_tx_in_cradle(
-                                active_dut_display=active_dut_display,
-                                return_from_bodyworn_rf=bodyworn_rf_active
-                            )
+                            if is_bodyworn_hendrix_tx:
+                                prompt_bodyworn_tx_in_cradle(
+                                    active_dut_display=active_dut_display,
+                                    return_from_bodyworn_rf=bodyworn_rf_active
+                                )
 
-                            current_battery_mv = capture_hendrix_tx_battery_mv(
-                                sg=sg,
-                                device_type=device_type,
-                                combo_meta=combo_meta,
-                                meta_path=meta_path,
-                                use_woym=use_woym,
-                                run_woym_path=run_woym_path,
-                                latest_woym_path=latest_woym_path,
-                                current_group=current_group,
-                                current_test_method=current_test_method,
-                                sweep_index=combo_index,
-                                total_sweeps=total_sweeps,
-                                total_points=sweep_point_count,
-                                axis=axis,
-                                orientation=orientation,
-                                polarisation=pol,
-                                antenna=antenna_label,
-                                ctx=ctx_value,
-                                power_level=power_level,
-                                channel=channel,
-                                frequency_hz=tx_freq,
-                                csv_path=csv_path,
-                                plot_png_path=plot_png_path,
-                                combo_dir=combo_dir,
-                            )
+                                current_battery_mv = capture_hendrix_tx_battery_mv(
+                                    sg=sg,
+                                    device_type=device_type,
+                                    combo_meta=combo_meta,
+                                    meta_path=meta_path,
+                                    use_woym=use_woym,
+                                    run_woym_path=run_woym_path,
+                                    latest_woym_path=latest_woym_path,
+                                    current_group=current_group,
+                                    current_test_method=current_test_method,
+                                    sweep_index=combo_index,
+                                    total_sweeps=total_sweeps,
+                                    total_points=sweep_point_count,
+                                    axis=axis,
+                                    orientation=orientation,
+                                    polarisation=pol,
+                                    antenna=antenna_label,
+                                    ctx=ctx_value,
+                                    power_level=power_level,
+                                    channel=channel,
+                                    frequency_hz=tx_freq,
+                                    csv_path=csv_path,
+                                    plot_png_path=plot_png_path,
+                                    combo_dir=combo_dir,
+                                )
+                            else:
+                                prompt_rxcc_usb_connect(
+                                    active_dut_display=active_dut_display,
+                                    return_from_rf=bodyworn_rf_active,
+                                )
 
                             if ctx_change_required and ctx_level is not None:
                                 print(f"[TX] Setting Hendrix CTX to {ctx_display}")
                                 sg.set_ctx(ctx_level)
+                            if antenna_change_required and antenna is not None:
+                                sg.set_antenna(antenna)
                             if power_change_required:
                                 sg.set_power_level(power_level)
                             if channel_change_required:
@@ -2052,7 +2151,12 @@ def run(params, equip):
                             print(f"[TX] Starting {device_type.upper()} RF")
                             sg.rf_on()
                             bodyworn_rf_active = True
-                            prompt_bodyworn_tx_remove_from_cradle()
+                            if is_bodyworn_hendrix_tx:
+                                prompt_bodyworn_tx_remove_from_cradle()
+                            else:
+                                prompt_rxcc_usb_disconnect(
+                                    active_dut_display=active_dut_display,
+                                )
 
                         update_reason = (
                             "Manual fallback is enabled for this run."
@@ -2060,14 +2164,24 @@ def run(params, equip):
                             else "Choose cradle update or manual confirmation."
                         )
                         while True:
-                            update_method = prompt_bodyworn_tx_update_choice(
-                                channel=channel,
-                                power_level=power_level,
-                                ctx_display=ctx_display,
-                                tx_freq=tx_freq,
-                                reason=update_reason,
-                                active_dut_display=active_dut_display,
-                            )
+                            if is_bodyworn_hendrix_tx:
+                                update_method = prompt_bodyworn_tx_update_choice(
+                                    channel=channel,
+                                    power_level=power_level,
+                                    ctx_display=ctx_display,
+                                    tx_freq=tx_freq,
+                                    reason=update_reason,
+                                    active_dut_display=active_dut_display,
+                                )
+                            else:
+                                update_method = prompt_rxcc_update_choice(
+                                    antenna_label=antenna_label,
+                                    channel=channel,
+                                    power_level=power_level,
+                                    tx_freq=tx_freq,
+                                    reason=update_reason,
+                                    active_dut_display=active_dut_display,
+                                )
                             bodyworn_manual_mode = update_method == "manual"
                             if bodyworn_manual_mode:
                                 bodyworn_rf_active = True
@@ -2080,7 +2194,7 @@ def run(params, equip):
                             except Exception as e:
                                 update_reason = str(e)
                                 print(
-                                    "[WARN] Hendrix TX cradle update failed; "
+                                    f"[WARN] {device_type.upper()} manual update failed; "
                                     "choose 1 to try again or 2 for manual confirmation."
                                 )
                                 print(f"[WARN] Reason: {update_reason}")
@@ -2091,7 +2205,7 @@ def run(params, equip):
                                         current_test_group=current_group,
                                         current_test_method=current_test_method,
                                         event=(
-                                            "Hendrix TX cradle update failed; "
+                                            f"{device_type.upper()} manual update failed; "
                                             f"manual fallback prompt reopened: {update_reason}"
                                         ),
                                     )
@@ -2115,7 +2229,7 @@ def run(params, equip):
                             sg.set_channel(channel)
 
                     if (
-                        is_bodyworn_hendrix_tx
+                        is_manual_rf_setup_mode
                         and config_change_required
                         and not bodyworn_manual_mode
                         and not bodyworn_config_applied
@@ -2123,7 +2237,12 @@ def run(params, equip):
                         print(f"[TX] Starting {device_type.upper()} RF")
                         sg.rf_on()
                         bodyworn_rf_active = True
-                        prompt_bodyworn_tx_remove_from_cradle()
+                        if is_bodyworn_hendrix_tx:
+                            prompt_bodyworn_tx_remove_from_cradle()
+                        else:
+                            prompt_rxcc_usb_disconnect(
+                                active_dut_display=active_dut_display,
+                            )
 
                     current_ctx_level = ctx_level
                     current_channel = channel
@@ -2156,24 +2275,24 @@ def run(params, equip):
                         f"VBW={verified_sa['vbw_hz']/1e3:.1f} kHz"
                     )
 
-                    if is_bodyworn_hendrix_tx:
+                    if is_manual_rf_setup_mode:
                         battery_mv = current_battery_mv
                         if battery_mv is not None:
                             combo_meta.setdefault("sig_gen_1", {})["battery_mv"] = battery_mv
                             meta_write(meta_path, combo_meta)
                         if bodyworn_manual_mode:
                             print(
-                                "[TX] Hendrix TX manual fallback active: "
+                                f"[TX] {device_type.upper()} manual fallback active: "
                                 "assuming RF is already correct for this sweep"
                             )
                         elif bodyworn_rf_active:
                             print(
-                                "[TX] Hendrix TX manual-setup mode: "
+                                f"[TX] {device_type.upper()} manual-setup mode: "
                                 "RF already on for this sweep"
                             )
                         else:
                             print(
-                                "[TX] Hendrix TX manual-setup mode: "
+                                f"[TX] {device_type.upper()} manual-setup mode: "
                                 "awaiting cradle update before RF start"
                             )
                     else:
@@ -2273,7 +2392,7 @@ def run(params, equip):
                             )
                         raise
                     finally:
-                        if not is_bodyworn_hendrix_tx and device_type != "wireless-pro-rx":
+                        if not is_manual_rf_setup_mode and device_type != "wireless-pro-rx":
                             if prompt_rf_stop_override(
                                 device_label=device_type.upper(),
                                 reason="End of sweep combination",
@@ -2295,24 +2414,31 @@ def run(params, equip):
         cleanup_where = "1_meas_azimuth.run/finally"
 
         try:
-            if is_bodyworn_hendrix_tx and bodyworn_rf_active:
+            if is_manual_rf_setup_mode and bodyworn_rf_active:
                 if bodyworn_manual_mode:
                     print(
-                        "[TX] Hendrix TX manual fallback active; "
+                        f"[TX] {device_type.upper()} manual fallback active; "
                         "leaving RF state unchanged at shutdown"
                     )
                 else:
-                    should_stop_rf = prompt_bodyworn_tx_in_cradle(
-                        active_dut_display=active_dut_display,
-                        return_from_bodyworn_rf=True,
-                        allow_skip=True,
-                    )
+                    if is_bodyworn_hendrix_tx:
+                        should_stop_rf = prompt_bodyworn_tx_in_cradle(
+                            active_dut_display=active_dut_display,
+                            return_from_bodyworn_rf=True,
+                            allow_skip=True,
+                        )
+                    else:
+                        should_stop_rf = prompt_rxcc_usb_connect(
+                            active_dut_display=active_dut_display,
+                            return_from_rf=True,
+                            allow_skip=True,
+                        )
                     if should_stop_rf is not False:
-                        print("[TX] Stopping HENDRIX_TX RF before shutdown")
+                        print(f"[TX] Stopping {device_type.upper()} RF before shutdown")
                         sg.rf_off()
                     else:
                         print(
-                            "[TX] Leaving HENDRIX_TX RF/state unchanged at shutdown "
+                            f"[TX] Leaving {device_type.upper()} RF/state unchanged at shutdown "
                             "by operator request"
                         )
                 bodyworn_rf_active = False
