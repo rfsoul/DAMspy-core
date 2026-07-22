@@ -101,6 +101,12 @@ class _FakeEquipment:
 
 
 class FastMeasAzimuthHelpersTests(unittest.TestCase):
+    def test_normalize_hendrix_tx_mode_accepts_legacy_bodyworn_alias(self):
+        self.assertEqual(
+            fast_meas_azimuth.normalize_hendrix_tx_mode("bodyworn"),
+            "usb_disconnected",
+        )
+
     def test_normalize_fastmode_mode_defaults_to_default(self):
         self.assertEqual(
             fast_meas_azimuth.normalize_fastmode_mode(None),

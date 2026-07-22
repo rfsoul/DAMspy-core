@@ -86,11 +86,23 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
         )
 
         self.assertEqual(config["device_type"], "hendrix_tx")
-        self.assertEqual(config["tx_mode"], "bodyworn")
+        self.assertEqual(config["tx_mode"], "usb_disconnected")
         self.assertEqual(
             config["antennas"],
             [{"value": None, "label": "n/a", "token": "na"}],
         )
+
+    def test_resolve_sig_gen_sweep_config_accepts_legacy_bodyworn_alias(self):
+        config = meas_azimuth.resolve_sig_gen_sweep_config(
+            {
+                "device_type": "hendrix_tx",
+                "tx_mode": "bodyworn",
+                "channels": [0],
+                "power_levels": [10],
+            }
+        )
+
+        self.assertEqual(config["tx_mode"], "usb_disconnected")
 
     def test_resolve_sig_gen_sweep_config_defaults_hendrix_tx_mode(self):
         config = meas_azimuth.resolve_sig_gen_sweep_config(
@@ -166,7 +178,7 @@ class MeasAzimuthHelpersTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(config["tx_mode"], "bodyworn")
+        self.assertEqual(config["tx_mode"], "usb_disconnected")
 
     def test_wireless_pro_rx_uses_wirepro_sweep_fields(self):
         config = meas_azimuth.resolve_sig_gen_sweep_config(

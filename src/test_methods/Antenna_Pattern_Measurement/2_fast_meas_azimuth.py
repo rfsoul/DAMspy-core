@@ -24,7 +24,10 @@ if hasattr(matplotlib, "use"):
 import matplotlib.pyplot as plt
 
 VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-rx"}
-VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
+VALID_HENDRIX_TX_MODES = {"always_in_cradle", "usb_disconnected"}
+LEGACY_HENDRIX_TX_MODE_ALIASES = {
+    "bodyworn": "usb_disconnected",
+}
 VALID_MANUAL_SETUP_ORDERS = {"outer", "inner"}
 VALID_PATTERN_DIRECTIONS = {"cw", "ccw"}
 VALID_FASTMODE_MODES = {"default", "fast"}
@@ -141,10 +144,13 @@ def normalize_hendrix_tx_mode(value) -> str:
         return DEFAULT_HENDRIX_TX_MODE
 
     tx_mode = str(value).strip().lower()
+    tx_mode = LEGACY_HENDRIX_TX_MODE_ALIASES.get(tx_mode, tx_mode)
     if tx_mode not in VALID_HENDRIX_TX_MODES:
         raise ValueError(
             "sig_gen_1.tx_mode must be one of "
-            f"{sorted(VALID_HENDRIX_TX_MODES)}, got {tx_mode!r}"
+            f"{sorted(VALID_HENDRIX_TX_MODES)} "
+            "(legacy alias 'bodyworn' is also accepted), "
+            f"got {value!r}"
         )
     return tx_mode
 
@@ -451,7 +457,7 @@ def prompt_bodyworn_tx_update_choice(
     active_dut_display="",
 ) -> str:
     print("\n" + "=" * 90)
-    print("[HENDRIX TX BODYWORN MODE]")
+    print("[HENDRIX TX MANUAL SETUP]")
     if active_dut_display:
         print(f"Active DUT: {active_dut_display}")
     print(f"Reason: {reason}")
@@ -489,7 +495,7 @@ def prompt_bodyworn_tx_in_cradle(
     allow_skip: bool = False,
 ) -> bool:
     print("\n" + "=" * 90)
-    print("[HENDRIX TX BODYWORN MODE]")
+    print("[HENDRIX TX MANUAL SETUP]")
     device_label = active_dut_display or "the Hendrix TX"
     if return_from_bodyworn_rf:
         print(
@@ -515,7 +521,7 @@ def prompt_bodyworn_tx_in_cradle(
 
 def prompt_bodyworn_tx_remove_from_cradle(*, active_dut_display: str = "") -> None:
     print("\n" + "=" * 90)
-    print("[HENDRIX TX BODYWORN MODE]")
+    print("[HENDRIX TX MANUAL SETUP]")
     device_label = active_dut_display or "the Hendrix TX"
     print(f"HID update successful. You can now remove {device_label} from the cradle.")
     print(f"Press Enter after {device_label} has been removed...")
@@ -1788,7 +1794,7 @@ def run(params, equip):
     tx_mode = sg_sweep_cfg["tx_mode"]
     ctx_levels = sg_sweep_cfg["ctx_levels"]
     is_bodyworn_hendrix_tx = (
-        device_type == "hendrix_tx" and tx_mode == "bodyworn"
+        device_type == "hendrix_tx" and tx_mode == "usb_disconnected"
     )
     raw_manual_setup_order = params.get("manual_setup_order")
     if raw_manual_setup_order is None:
@@ -2480,17 +2486,17 @@ def run(params, equip):
                             meta_write(meta_path, combo_meta)
                         if bodyworn_manual_mode:
                             print(
-                                "[TX] Hendrix TX bodyworn manual fallback active: "
+                                "[TX] Hendrix TX manual fallback active: "
                                 "assuming RF is already correct for this sweep"
                             )
                         elif bodyworn_rf_active:
                             print(
-                                "[TX] Hendrix TX bodyworn mode: "
+                                "[TX] Hendrix TX manual-setup mode: "
                                 "RF already on for this sweep"
                             )
                         else:
                             print(
-                                "[TX] Hendrix TX bodyworn mode: "
+                                "[TX] Hendrix TX manual-setup mode: "
                                 "awaiting cradle update before RF start"
                             )
                     else:
@@ -2675,7 +2681,7 @@ def run(params, equip):
             if is_bodyworn_hendrix_tx and bodyworn_rf_active:
                 if bodyworn_manual_mode:
                     print(
-                        "[TX] Hendrix TX bodyworn manual fallback active; "
+                        "[TX] Hendrix TX manual fallback active; "
                         "leaving RF state unchanged at shutdown"
                     )
                 else:
