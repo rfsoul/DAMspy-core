@@ -27,7 +27,9 @@ VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-
 VALID_HENDRIX_TX_MODES = {"always_in_cradle", "bodyworn"}
 VALID_MANUAL_SETUP_ORDERS = {"outer", "inner"}
 VALID_PATTERN_DIRECTIONS = {"cw", "ccw"}
+VALID_FASTMODE_MODES = {"default", "fast"}
 DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
+DEFAULT_FASTMODE_MODE = "default"
 DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S = 3.75
 DEFAULT_FAST_MOVE_START_TIMEOUT_S = 15.0
 DEFAULT_FAST_WOYM_UPDATE_INTERVAL_S = 1.0
@@ -168,6 +170,19 @@ def normalize_pattern_direction(value) -> str:
             f"{sorted(VALID_PATTERN_DIRECTIONS)}, got {value!r}"
         )
     return pattern_direction
+
+
+def normalize_fastmode_mode(value) -> str:
+    if value is None:
+        return DEFAULT_FASTMODE_MODE
+
+    fastmode_mode = str(value).strip().lower()
+    if fastmode_mode not in VALID_FASTMODE_MODES:
+        raise ValueError(
+            "fastmode_mode must be one of "
+            f"{sorted(VALID_FASTMODE_MODES)}, got {value!r}"
+        )
+    return fastmode_mode
 
 
 def normalize_hendrix_ctx_level(value) -> str:
@@ -547,6 +562,50 @@ def prompt_interrupt_menu(current_az: float) -> str:
             return "stop_boresight"
         if choice == "3":
             return "stop_hold"
+        print("Invalid choice. Enter 1, 2, or 3.")
+
+
+def prompt_fastmode_positioner_start(
+    *,
+    max_angle_deg: float,
+    pattern_direction: str,
+    active_dut_display: str = "",
+) -> int:
+    magnitude = abs(float(max_angle_deg))
+    default_direction = normalize_pattern_direction(pattern_direction)
+    negative_angle = -magnitude
+    positive_angle = magnitude
+    default_start_angle = positive_angle if default_direction == "cw" else negative_angle
+
+    print("\n" + "=" * 90)
+    print("[FASTMODE FAST POSITIONER CHECK]")
+    if active_dut_display:
+        print(f"Active DUT: {active_dut_display}")
+    print("Confirm the current positioner pointing before the first fast sweep.")
+    print(f"1 = at the negative extreme ({format_angle(negative_angle)})")
+    print("2 = at boresight (0.0 deg)")
+    print(f"3 = at the positive extreme ({format_angle(positive_angle)})")
+    print(
+        "If boresight is selected, the runner will move to "
+        f"{format_angle(default_start_angle)} before starting the sweep."
+    )
+    print("=" * 90)
+
+    while True:
+        try:
+            choice = input("Select 1, 2, or 3: ").strip()
+        except EOFError:
+            print(
+                "[INFO] No operator input detected; assuming boresight and "
+                "using the default sweep start."
+            )
+            return 2
+        if choice == "1":
+            return 1
+        if choice == "2":
+            return 2
+        if choice == "3":
+            return 3
         print("Invalid choice. Enter 1, 2, or 3.")
 
 
@@ -1002,6 +1061,37 @@ def clamp_fast_angle(angle_deg: float, start_angle_deg: float, stop_angle_deg: f
     return max(low, min(high, angle_deg))
 
 
+def fastmode_position_slot_to_angle(position_slot: int, max_angle_deg: float) -> float:
+    magnitude = abs(float(max_angle_deg))
+    if position_slot == 1:
+        return -magnitude
+    if position_slot == 2:
+        return 0.0
+    if position_slot == 3:
+        return magnitude
+    raise ValueError(f"position_slot must be 1, 2, or 3; got {position_slot!r}")
+
+
+def infer_fastmode_position_slot(angle_deg: float, max_angle_deg: float) -> int:
+    magnitude = abs(float(max_angle_deg))
+    tolerance_deg = max(1e-6, magnitude * 1e-6)
+    if abs(angle_deg) <= tolerance_deg:
+        return 2
+    if abs(angle_deg - magnitude) <= tolerance_deg:
+        return 3
+    if abs(angle_deg + magnitude) <= tolerance_deg:
+        return 1
+    return 3 if angle_deg > 0 else 1
+
+
+def resolve_fastmode_pattern_direction(position_slot: int, default_pattern_direction: str) -> str:
+    if position_slot == 3:
+        return "cw"
+    if position_slot == 1:
+        return "ccw"
+    return normalize_pattern_direction(default_pattern_direction)
+
+
 def run_single_azimuth_sweep(
     *,
     pos,
@@ -1038,8 +1128,10 @@ def run_single_azimuth_sweep(
     pattern_direction: str = "cw",
     sweep_speed_deg_per_s: float = DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S,
     move_start_timeout_s: float = DEFAULT_FAST_MOVE_START_TIMEOUT_S,
+    initial_position_deg: float = 0.0,
+    return_to_boresight_after_sweep: bool = True,
 ):
-    current_az = 0.0
+    current_az = float(initial_position_deg)
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
     sweep_speed_deg_per_s = float(sweep_speed_deg_per_s)
     if sweep_speed_deg_per_s <= 0:
@@ -1163,8 +1255,9 @@ def run_single_azimuth_sweep(
         print("[SWEEP] BEGIN FAST AZIMUTH PATTERN SWEEP")
         print("----------------------------------------------------\n")
 
-        print("[POS] Software azimuth reference set to 0 deg")
-        current_az = 0.0
+        if boresight_only:
+            current_az = 0.0
+        print(f"[POS] Software azimuth reference set to {format_angle(current_az)}")
         if boresight_only:
             print("[MODE] Boresight-only capture: positioner movement disabled")
         else:
@@ -1257,7 +1350,7 @@ def run_single_azimuth_sweep(
                     f"\n[POS] Pre-positioning to {format_angle(start_angle_deg)} "
                     "(no RF capture)"
                 )
-                move_rel(start_angle_deg)
+                move_rel(start_angle_deg - current_az)
 
             current_az = start_angle_deg if not boresight_only else 0.0
 
@@ -1575,8 +1668,14 @@ def run_single_azimuth_sweep(
         )
 
         if not boresight_only:
-            print("\n[POS] Sweep complete - returning to boresight")
-            return_to_boresight()
+            if return_to_boresight_after_sweep:
+                print("\n[POS] Sweep complete - returning to boresight")
+                return_to_boresight()
+            else:
+                print(
+                    "\n[POS] Sweep complete - holding final position at "
+                    f"{format_angle(current_az)} for the next setup change"
+                )
 
         if use_woym:
             update_woym_generic(
@@ -1618,6 +1717,12 @@ def run_single_azimuth_sweep(
                     f"PWR={power_level} CH={channel}"
                 ),
             )
+
+    return {
+        "final_angle_deg": current_az,
+        "pattern_direction": direction_label,
+        "sample_count": sample_index,
+    }
 
 
 def run(params, equip):
@@ -1664,6 +1769,7 @@ def run(params, equip):
     lowest_level_dbm = params.get("lowest_level", None)
     plot_every_deg = float(params.get("live_plot_every_deg", 20.0))
     pattern_direction = normalize_pattern_direction(params.get("pattern_direction", "cw"))
+    fastmode_mode = normalize_fastmode_mode(params.get("fastmode_mode", DEFAULT_FASTMODE_MODE))
     sweep_speed_deg_per_s = float(
         params.get("sweep_speed_deg_per_s", DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S)
     )
@@ -1735,6 +1841,7 @@ def run(params, equip):
     print(f"      YAML comment       : {yaml_comment}")
     print(f"      Axis               : {axis}")
     print(f"      Sweep mode         : {sweep_mode}")
+    print(f"      Fastmode mode      : {fastmode_mode}")
     print(f"      Manual setup order : {manual_setup_order}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
@@ -1830,6 +1937,8 @@ def run(params, equip):
         current_battery_mv = None
         confirmed_orientation = None
         confirmed_polarisation = None
+        current_position_deg = 0.0
+        current_position_slot = 2
 
         measurement_dir = os.path.join(outdir, "2_fast_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
@@ -2436,7 +2545,33 @@ def run(params, equip):
                             combo_dir=combo_dir,
                         )
                     try:
-                        run_single_azimuth_sweep(
+                        effective_pattern_direction = pattern_direction
+                        return_to_boresight_after_sweep = True
+                        if fastmode_mode == "fast" and not boresight_only:
+                            if combo_index == 1:
+                                current_position_slot = prompt_fastmode_positioner_start(
+                                    max_angle_deg=maxa,
+                                    pattern_direction=pattern_direction,
+                                    active_dut_display=active_dut_display,
+                                )
+                            current_position_deg = fastmode_position_slot_to_angle(
+                                current_position_slot,
+                                maxa,
+                            )
+                            effective_pattern_direction = resolve_fastmode_pattern_direction(
+                                current_position_slot,
+                                pattern_direction,
+                            )
+                            return_to_boresight_after_sweep = False
+                            print(
+                                "[FASTMODE FAST] Remembered positioner state before sweep: "
+                                f"{current_position_slot} ({format_angle(current_position_deg)})"
+                            )
+                        else:
+                            current_position_deg = 0.0
+                            current_position_slot = 2
+
+                        sweep_result = run_single_azimuth_sweep(
                             pos=pos,
                             sa=sa,
                             csv_path=csv_path,
@@ -2468,10 +2603,41 @@ def run(params, equip):
                             rbw_hz=rbw_hz,
                             vbw_hz=vbw_hz,
                             battery_mv=battery_mv,
-                            pattern_direction=pattern_direction,
+                            pattern_direction=effective_pattern_direction,
                             sweep_speed_deg_per_s=sweep_speed_deg_per_s,
                             move_start_timeout_s=move_start_timeout_s,
+                            initial_position_deg=current_position_deg,
+                            return_to_boresight_after_sweep=return_to_boresight_after_sweep,
                         )
+                        if sweep_result is None:
+                            if boresight_only or return_to_boresight_after_sweep:
+                                current_position_deg = 0.0
+                                current_position_slot = 2
+                            else:
+                                current_position_deg = build_fast_sweep_geometry(
+                                    maxa,
+                                    effective_pattern_direction,
+                                )["stop_angle_deg"]
+                                current_position_slot = infer_fastmode_position_slot(
+                                    current_position_deg,
+                                    maxa,
+                                )
+                        else:
+                            current_position_deg = float(
+                                sweep_result.get(
+                                    "final_angle_deg",
+                                    0.0 if return_to_boresight_after_sweep else current_position_deg,
+                                )
+                            )
+                            current_position_slot = infer_fastmode_position_slot(
+                                current_position_deg,
+                                maxa,
+                            )
+                        if fastmode_mode == "fast" and not boresight_only:
+                            print(
+                                "[FASTMODE FAST] Remembered positioner state after sweep: "
+                                f"{current_position_slot} ({format_angle(current_position_deg)})"
+                            )
                     except SweepStoppedByUser:
                         raise
                     except Exception as e:

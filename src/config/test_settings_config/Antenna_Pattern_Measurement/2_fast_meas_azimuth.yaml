@@ -1,17 +1,17 @@
 dut_definitions:
   DUT1:
-    product: "wireless-pro-rx"
-    hardware_config: "002"
-    serial_number: "0"    #2F75FE2AD59D1135
-    foldername_comment: "pro_pattern_ref"
+    product: "rxcc"
+    hardware_config: "V6"
+    serial_number: "#22_2F96E505BDE4878D"
+    foldername_comment: ""
 
   DUT2:
     product: "hendrix-tx"
-    hardware_config: "emmc"
-    serial_number: "Tx_RF1_C572DD9C17659DAA"   #C572DD9C17659DAA
-    foldername_comment: "bodyworn_0.25s"
+    hardware_config: "V3P_3.75mm_dremeled"
+    serial_number: "Tx_RF12_5084C78AD1EA02A1"   #C572DD9C17659DAA
+    foldername_comment: ""
 
-DUTS: [DUT2] #[DUT1, DUT2]
+DUTS: [DUT1,DUT2] #[DUT1, DUT2]
 
 yaml_comment: ""
 orientations: [ori2]  # [ori1, ori2]
@@ -38,7 +38,8 @@ max_hold_seconds: 0.25
 sweep_mode: boresight_return     #boresight_return  #boresight_only
 live_plot_every_deg: 20
 use_woym: true
-pattern_direction: CW   # CW = start at +max and sweep continuously to -max. Default if omitted.
+pattern_direction: CW  # CW = start at +max and sweep continuously to -max. Default if omitted.
+fastmode_mode: fast
 sweep_speed_deg_per_s: 3.75
 move_start_timeout_s: 15
 
@@ -55,7 +56,7 @@ sig_gen_1:  # rode rxcc device
   tx_mode: "bodyworn"  # Hendrix TX only: "always_in_cradle" or "bodyworn"
   tx_cable_loss: 0 # CW generated inside the product 
   #tx_power: 16 #in dBm
-  channels: [40]   # [0, 20, 40, 60, 80]
+  channels: [80, 40, 0]   # [0, 20, 40, 60, 80]
   #wirepro_freq: [50]
   power_levels: [10]
   #wirepro_power: [4]
