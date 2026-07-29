@@ -1,5 +1,20 @@
 import importlib
+
 import yaml
+
+
+class _UnavailableDevice:
+    """Placeholder that turns connection failures into a short runtime error."""
+
+    def __init__(self, error):
+        self._error = error
+
+    def __bool__(self):
+        return False
+
+    def __getattr__(self, _name):
+        raise RuntimeError("conn") from self._error
+
 
 class EquipmentLoader:
     """
@@ -10,8 +25,8 @@ class EquipmentLoader:
         - "signal_generator.sig_gen_1"
 
     Matching rules:
-        - If "category" is required → load ALL devices under that category
-        - If "category.device" is required → load ONLY that device
+        - If "category" is required -> load ALL devices under that category
+        - If "category.device" is required -> load ONLY that device
     """
 
     def __init__(self, config_path, required_equipment):
@@ -48,10 +63,13 @@ class EquipmentLoader:
 
             # SINGLE-DEVICE CATEGORY
             if isinstance(cat_cfg, dict) and "driver" in cat_cfg:
-                inst = self._build_device(cat_cfg)
+                inst = self._safe_build_device(cat_cfg)
                 setattr(self, category, inst)
                 self._drivers[category] = inst
-                print(f"  ✔ Loaded device '{category}'")
+                if isinstance(inst, _UnavailableDevice):
+                    print("conn")
+                else:
+                    print(f"  Loaded device '{category}'")
                 continue
 
             # MULTI-DEVICE CATEGORY
@@ -68,10 +86,13 @@ class EquipmentLoader:
                         print(f"[EquipmentLoader] Skipping '{category}.{dev_name}' (invalid structure)")
                         continue
 
-                    inst = self._build_device(dev_cfg)
+                    inst = self._safe_build_device(dev_cfg)
                     devices[dev_name] = inst
                     self._drivers[f"{category}.{dev_name}"] = inst
-                    print(f"  ✔ Loaded device '{category}.{dev_name}'")
+                    if isinstance(inst, _UnavailableDevice):
+                        print("conn")
+                    else:
+                        print(f"  Loaded device '{category}.{dev_name}'")
 
                 # Flatten if only one device
                 if len(devices) == 1:
@@ -119,3 +140,9 @@ class EquipmentLoader:
         module = importlib.import_module(module_path)
         cls = getattr(module, cfg["class_name"])
         return cls(cfg)
+
+    def _safe_build_device(self, cfg):
+        try:
+            return self._build_device(cfg)
+        except ConnectionError as exc:
+            return _UnavailableDevice(exc)
