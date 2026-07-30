@@ -45,7 +45,13 @@ move_start_timeout_s: 15
 
 
 height_m: 1.5
-polarisation: [H,V] #[H, V]
+polarisation: [H] #[H, V]
+orientation_change_mode: manual   # manual = operator changes DUT orientation; auto = prompt for current orientation then drive elevation deltas from orientation_elevation_deg
+orientation_elevation_deg:
+  ori4: 0
+  ori1: -90
+  ori2: -180
+  ori3: -270
 manual_setup_order: inner   # outer = set orientation/polarisation first, then sweep RF settings; inner = hold RF settings fixed while running all orientation/polarisation combinations
 dwell_s: 0
 lowest_level: -80 #dBm

@@ -109,6 +109,21 @@ class RunOutputFolderNameTests(unittest.TestCase):
             [[40], [0], [80]],
         )
 
+    def test_build_interleaved_azimuth_execution_plan_offsets_channels_between_duts(self):
+        params = {
+            "sig_gen_1": {
+                "device_type": "hendrix_tx",
+                "channels": [1, 2, 3],
+                "power_levels": [10],
+                "CTX": [1],
+            }
+        }
+
+        plan = run_module.build_interleaved_azimuth_execution_plan(params, dut_count=2)
+
+        self.assertEqual([item["dut_slot"] for item in plan], [1, 2, 2, 1, 1, 2])
+        self.assertEqual([item["channel"] for item in plan], [1, 2, 3, 2, 3, 1])
+
     def test_optional_foldername_comment_empty_string_is_skipped(self):
         params = {
             "DUT_product": "DUT",

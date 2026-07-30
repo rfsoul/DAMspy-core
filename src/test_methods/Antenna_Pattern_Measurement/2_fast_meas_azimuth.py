@@ -29,6 +29,7 @@ LEGACY_HENDRIX_TX_MODE_ALIASES = {
     "bodyworn": "usb_disconnected",
 }
 VALID_MANUAL_SETUP_ORDERS = {"outer", "inner"}
+VALID_ORIENTATION_CHANGE_MODES = {"manual", "auto"}
 VALID_PATTERN_DIRECTIONS = {"cw", "ccw"}
 VALID_FASTMODE_MODES = {"default", "fast"}
 DEFAULT_HENDRIX_TX_MODE = "always_in_cradle"
@@ -189,6 +190,63 @@ def normalize_fastmode_mode(value) -> str:
             f"{sorted(VALID_FASTMODE_MODES)}, got {value!r}"
         )
     return fastmode_mode
+
+
+def normalize_orientation_change_mode(value) -> str:
+    if value is None:
+        return "manual"
+
+    orientation_change_mode = str(value).strip().lower()
+    if orientation_change_mode not in VALID_ORIENTATION_CHANGE_MODES:
+        raise ValueError(
+            "orientation_change_mode must be one of "
+            f"{sorted(VALID_ORIENTATION_CHANGE_MODES)}, got {value!r}"
+        )
+    return orientation_change_mode
+
+
+def normalize_orientation_token(value) -> str:
+    return str(value).strip().lower()
+
+
+def normalize_orientation_elevation_map(value) -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not value:
+        raise ValueError("orientation_elevation_deg must be a non-empty mapping")
+
+    normalized = {}
+    for raw_orientation, raw_angle in value.items():
+        orientation = normalize_orientation_token(raw_orientation)
+        if not orientation:
+            raise ValueError("orientation_elevation_deg contains a blank orientation name")
+        if orientation in normalized:
+            raise ValueError(
+                f"orientation_elevation_deg defines duplicate orientation {orientation!r}"
+            )
+        normalized[orientation] = float(raw_angle)
+
+    return normalized
+
+
+def order_orientation_angle_items(orientation_elevation_deg: dict[str, float]) -> list[tuple[str, float]]:
+    return sorted(
+        orientation_elevation_deg.items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
+def resolve_auto_orientation_rotation_deg(
+    current_angle_deg: float,
+    target_orientation,
+    orientation_elevation_deg: dict[str, float],
+) -> float:
+    target_token = normalize_orientation_token(target_orientation)
+    if target_token not in orientation_elevation_deg:
+        raise ValueError(
+            f"orientation_elevation_deg is missing target orientation {target_orientation!r}"
+        )
+    return orientation_elevation_deg[target_token] - float(current_angle_deg)
 
 
 def normalize_hendrix_ctx_level(value) -> str:
@@ -425,6 +483,47 @@ def prompt_manual_change(message: str, active_dut_display: str = "") -> None:
     print("Press Enter when complete...")
     print("=" * 90)
     input()
+
+
+def prompt_current_auto_orientation(
+    orientation_elevation_deg: dict[str, float],
+    *,
+    active_dut_display: str = "",
+) -> tuple[str, float]:
+    ordered_options = order_orientation_angle_items(orientation_elevation_deg)
+    if not ordered_options:
+        raise ValueError("Auto orientation mode requires orientation_elevation_deg options")
+
+    print("\n" + "=" * 90)
+    print("[AUTO ORIENTATION SETUP]")
+    if active_dut_display:
+        print(f"Active DUT: {active_dut_display}")
+    print("Confirm the DUT's current elevation-plate orientation before the run starts.")
+    for index, (orientation, angle_deg) in enumerate(ordered_options, start=1):
+        print(f"  [{index}] {orientation} ({angle_deg:+.0f} deg)")
+    print("=" * 90)
+
+    while True:
+        try:
+            choice = input(f"Select 1-{len(ordered_options)}: ").strip().lower()
+        except EOFError:
+            orientation, angle_deg = ordered_options[0]
+            print(
+                "[INFO] No operator input detected; defaulting current orientation to "
+                f"{orientation} ({angle_deg:+.0f} deg)."
+            )
+            return orientation, angle_deg
+
+        if choice.isdigit():
+            selected_index = int(choice)
+            if 1 <= selected_index <= len(ordered_options):
+                return ordered_options[selected_index - 1]
+
+        for orientation, angle_deg in ordered_options:
+            if choice == orientation:
+                return orientation, angle_deg
+
+        print(f"Invalid choice. Enter 1-{len(ordered_options)}.")
 
 
 def prompt_wirepro_manual_setup(
@@ -1847,6 +1946,12 @@ def run(params, equip):
 
     axis = params.get("axis", "azimuth")
     sweep_mode = params.get("sweep_mode", "unknown")
+    orientation_change_mode = normalize_orientation_change_mode(
+        params.get("orientation_change_mode", "manual")
+    )
+    orientation_elevation_deg = normalize_orientation_elevation_map(
+        params.get("orientation_elevation_deg")
+    )
 
     bore = float(params.get("boresight_deg", 0))
     max_angle_values = normalize_max_angle_values(params["max_angle_deg"])
@@ -1867,6 +1972,7 @@ def run(params, equip):
     )
     orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
+    orientation_tokens = [normalize_orientation_token(orientation) for orientation in orientations]
 
     sg_cfg = params["sig_gen_1"]
     sg_sweep_cfg = resolve_sig_gen_sweep_config(sg_cfg)
@@ -1911,6 +2017,22 @@ def run(params, equip):
     vbw_hz = int(sa_cfg.get("vbw_hz", sa_cfg.get("VBW", 10_000)))
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
 
+    if orientation_change_mode == "auto":
+        if not orientation_elevation_deg:
+            raise ValueError(
+                "orientation_change_mode 'auto' requires orientation_elevation_deg to be defined"
+            )
+        missing_orientations = [
+            orientation
+            for orientation, token in zip(orientations, orientation_tokens)
+            if token not in orientation_elevation_deg
+        ]
+        if missing_orientations:
+            raise ValueError(
+                "orientation_elevation_deg is missing configured orientation(s): "
+                f"{missing_orientations}"
+            )
+
     total_sweeps = (
         len(manual_variants)
         * len(rf_variants)
@@ -1935,6 +2057,9 @@ def run(params, equip):
     print(f"      Axis               : {axis}")
     print(f"      Sweep mode         : {sweep_mode}")
     print(f"      Fastmode mode      : {fastmode_mode}")
+    print(f"      Orientation change : {orientation_change_mode}")
+    if orientation_change_mode == "auto":
+        print(f"      Orientation angles : {orientation_elevation_deg}")
     print(f"      Manual setup order : {manual_setup_order}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
@@ -2030,11 +2155,42 @@ def run(params, equip):
         current_battery_mv = None
         confirmed_orientation = None
         confirmed_polarisation = None
+        current_orientation_angle_deg = None
         current_position_deg = 0.0
         current_position_slot = 2
 
         measurement_dir = os.path.join(outdir, "2_fast_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
+
+        if orientation_change_mode == "auto":
+            confirmed_orientation, current_orientation_angle_deg = prompt_current_auto_orientation(
+                orientation_elevation_deg,
+                active_dut_display=active_dut_display,
+            )
+            print(
+                "[AUTO] Starting orientation reference: "
+                f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+            )
+            if use_woym:
+                update_woym_generic(
+                    run_woym_path=run_woym_path,
+                    latest_woym_path=latest_woym_path,
+                    current_state={
+                        "state": "configuring",
+                        "message": (
+                            "Confirmed current auto orientation "
+                            f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+                        ),
+                        "target": {
+                            "orientation": confirmed_orientation,
+                            "elevation_deg": current_orientation_angle_deg,
+                        },
+                    },
+                    event=(
+                        "Confirmed current auto orientation "
+                        f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+                    ),
+                )
 
         def activate_wirepro_manual_mode(*, antenna_label, channel, power_level, tx_freq, reason):
             nonlocal wirepro_manual_mode
@@ -2059,27 +2215,66 @@ def run(params, equip):
         def ensure_manual_setup(orientation, polarisation):
             nonlocal confirmed_orientation
             nonlocal confirmed_polarisation
+            nonlocal current_orientation_angle_deg
 
             orientation_change_required = confirmed_orientation != orientation
+            if orientation_change_required and orientation_change_mode == "auto":
+                requested_auto_rotation_deg = resolve_auto_orientation_rotation_deg(
+                    current_orientation_angle_deg,
+                    orientation,
+                    orientation_elevation_deg,
+                )
+            else:
+                requested_auto_rotation_deg = None
+
             if use_woym and orientation_change_required:
+                if orientation_change_mode == "auto":
+                    orientation_message = (
+                        f"Auto-rotating elevation plate {requested_auto_rotation_deg:+.0f} deg "
+                        f"for DUT orientation '{orientation}'"
+                    )
+                    orientation_event = (
+                        f"Auto orientation change to {orientation}: "
+                        f"elevation plate {requested_auto_rotation_deg:+.0f} deg"
+                    )
+                else:
+                    orientation_message = (
+                        f"Waiting for manual DUT orientation change to '{orientation}'"
+                    )
+                    orientation_event = f"Awaiting DUT orientation change: {orientation}"
+
                 update_woym_generic(
                     run_woym_path=run_woym_path,
                     latest_woym_path=latest_woym_path,
                     current_state={
                         "state": "configuring",
-                        "message": f"Waiting for manual DUT orientation change to '{orientation}'",
+                        "message": orientation_message,
                         "target": {
                             "orientation": orientation,
                         },
                     },
-                    event=f"Awaiting DUT orientation change: {orientation}",
+                    event=orientation_event,
                 )
 
             if orientation_change_required:
-                prompt_manual_change(
-                    f"Set the DUT orientation to '{orientation}'.",
-                    active_dut_display=active_dut_display,
-                )
+                if orientation_change_mode == "auto":
+                    print(
+                        "[AUTO] Changing DUT orientation via elevation plate: "
+                        f"{confirmed_orientation} -> {orientation} "
+                        f"({requested_auto_rotation_deg:+.0f} deg)"
+                    )
+                    if abs(requested_auto_rotation_deg) >= 1e-9:
+                        pos.go_elevation(requested_auto_rotation_deg)
+                    else:
+                        print("[AUTO] Orientation already at requested elevation angle.")
+                    current_orientation_angle_deg = orientation_elevation_deg[
+                        normalize_orientation_token(orientation)
+                    ]
+                else:
+                    prompt_manual_change(
+                        f"Set the DUT orientation to '{orientation}'.",
+                        active_dut_display=active_dut_display,
+                    )
                 confirmed_orientation = orientation
             else:
                 print(f"[MANUAL] DUT orientation already confirmed as '{orientation}', continuing.")

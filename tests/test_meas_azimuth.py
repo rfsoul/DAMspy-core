@@ -603,6 +603,109 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(write_plot.call_count, 1)
         self.assertEqual(write_plot.call_args.args, (csv_path, plot_png_path))
 
+    def test_run_single_azimuth_sweep_can_restart_from_last_extreme_and_reverse(self):
+        class FakePositioner:
+            def __init__(self):
+                self.moves = []
+
+            def go_azimuth(self, delta_deg):
+                self.moves.append(delta_deg)
+
+        class FakeSpectrumAnalyser:
+            def __init__(self):
+                self.calls = []
+                self.results = iter([(2_400_000_000, -30.0)] * 10)
+
+            def read_peak_maxhold(self, hold_s):
+                self.calls.append(hold_s)
+                return next(self.results)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = os.path.join(tmpdir, "pattern_azimuth.csv")
+            plot_png_path = os.path.join(tmpdir, "pattern_azimuth_EEmax.png")
+            meta_path = os.path.join(tmpdir, "metadata.json")
+
+            first_pos = FakePositioner()
+            second_pos = FakePositioner()
+            sa = FakeSpectrumAnalyser()
+
+            with mock.patch.object(meas_azimuth, "sleep"), \
+                 mock.patch.object(meas_azimuth, "write_partial_polar_plot"), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                first_end = meas_azimuth.run_single_azimuth_sweep(
+                    pos=first_pos,
+                    sa=sa,
+                    csv_path=csv_path,
+                    plot_png_path=plot_png_path,
+                    run_woym_path="",
+                    latest_woym_path="",
+                    use_woym=False,
+                    current_group="Antenna_Pattern_Measurement",
+                    current_test_method="1_meas_azimuth",
+                    orientation="upright",
+                    polarisation="V",
+                    antenna="main",
+                    ctx=None,
+                    power_level=0,
+                    channel=78,
+                    tx_freq=2_478_000_000,
+                    sweep_index=1,
+                    total_sweeps=2,
+                    sweep_mode="full",
+                    maxa=2.0,
+                    step=1.0,
+                    dwell_s=0.0,
+                    hold_s=0.01,
+                    lowest_level_dbm=None,
+                    plot_every_deg=0.5,
+                    combo_dir=tmpdir,
+                    meta_path=meta_path,
+                    span_hz=10_000,
+                    rbw_hz=1_000,
+                    vbw_hz=1_000,
+                    battery_mv=None,
+                    starting_azimuth_deg=0.0,
+                )
+                second_end = meas_azimuth.run_single_azimuth_sweep(
+                    pos=second_pos,
+                    sa=sa,
+                    csv_path=csv_path,
+                    plot_png_path=plot_png_path,
+                    run_woym_path="",
+                    latest_woym_path="",
+                    use_woym=False,
+                    current_group="Antenna_Pattern_Measurement",
+                    current_test_method="1_meas_azimuth",
+                    orientation="upright",
+                    polarisation="V",
+                    antenna="main",
+                    ctx=None,
+                    power_level=0,
+                    channel=78,
+                    tx_freq=2_478_000_000,
+                    sweep_index=2,
+                    total_sweeps=2,
+                    sweep_mode="full",
+                    maxa=2.0,
+                    step=1.0,
+                    dwell_s=0.0,
+                    hold_s=0.01,
+                    lowest_level_dbm=None,
+                    plot_every_deg=0.5,
+                    combo_dir=tmpdir,
+                    meta_path=meta_path,
+                    span_hz=10_000,
+                    rbw_hz=1_000,
+                    vbw_hz=1_000,
+                    battery_mv=None,
+                    starting_azimuth_deg=first_end,
+                )
+
+        self.assertEqual(first_pos.moves, [2.0, -1.0, -1.0, -1.0, -1.0])
+        self.assertEqual(first_end, -2.0)
+        self.assertEqual(second_pos.moves, [1.0, 1.0, 1.0, 1.0])
+        self.assertEqual(second_end, 2.0)
+
     def test_run_bodyworn_captures_battery_before_remove_prompt(self):
         events = []
         equip = _FakeEquipment(event_log=events)
@@ -848,6 +951,47 @@ class MeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
         self.assertTrue(usb_connect_calls[-1]["return_from_rf"])
+
+    def test_run_bodyworn_interleaved_handoff_skips_shutdown_cradle_prompt(self):
+        events = []
+        equip = _FakeEquipment(event_log=events)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                {
+                    "device_type": "hendrix_tx",
+                    "tx_mode": "bodyworn",
+                    "channels": [7],
+                    "power_levels": [3],
+                },
+            )
+            params["interleaved_has_more_runs"] = True
+
+            with mock.patch.object(meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "prompt_bodyworn_tx_in_cradle",
+                     side_effect=lambda **kwargs: events.append(
+                         f"in:{kwargs.get('return_from_bodyworn_rf', False)}"
+                     ),
+                 ) as prompt_in, \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "prompt_bodyworn_tx_remove_from_cradle",
+                     side_effect=lambda: events.append("out"),
+                 ), \
+                 mock.patch.object(
+                     meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     return_value=-170.0,
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                result = meas_azimuth.run(params, equip)
+
+        self.assertEqual(prompt_in.call_count, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 0)
+        self.assertEqual(result, -170.0)
 
     def test_run_passes_ctx_low_from_yaml_to_signal_generator(self):
         equip = _FakeEquipment()

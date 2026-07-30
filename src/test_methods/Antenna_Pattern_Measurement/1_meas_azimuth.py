@@ -1074,17 +1074,27 @@ def run_single_azimuth_sweep(
     rbw_hz: float,
     vbw_hz: float,
     battery_mv=None,
+    starting_azimuth_deg: float = 0.0,
 ):
-    current_az = 0.0
+    current_az = float(starting_azimuth_deg)
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
 
     if boresight_only:
+        current_az = 0.0
         steps = 0
         total_points = 1
         maxa = 0.0
+        sweep_angles = [0.0]
     else:
+        step = abs(step)
         steps = int((2 * maxa) / step)
         total_points = steps + 1
+        if math.isclose(current_az, -maxa, abs_tol=1e-9):
+            sweep_angles = [-maxa + step * idx for idx in range(total_points)]
+        else:
+            if not math.isclose(current_az, maxa, abs_tol=1e-9):
+                current_az = 0.0 if not math.isfinite(current_az) else current_az
+            sweep_angles = [maxa - step * idx for idx in range(total_points)]
 
     def move_rel(delta_deg):
         nonlocal current_az
@@ -1168,8 +1178,7 @@ def run_single_azimuth_sweep(
         print("[SWEEP] BEGIN AZIMUTH PATTERN SWEEP")
         print("----------------------------------------------------\n")
 
-        print("[POS] Software azimuth reference set to 0 deg")
-        current_az = 0.0
+        print(f"[POS] Software azimuth reference set to {format_angle(current_az)}")
         if boresight_only:
             print("[MODE] Boresight-only capture: positioner movement disabled")
 
@@ -1233,15 +1242,25 @@ def run_single_azimuth_sweep(
             )
 
         idx = 0
-        pre_positioned = False
         while True:
             try:
-                if not pre_positioned:
-                    print(f"\n[POS] Pre-positioning to {format_angle(maxa)} (no RF capture)")
-                    move_rel(+maxa)
-                    pre_positioned = True
+                if not boresight_only:
+                    start_angle = sweep_angles[0]
+                    if math.isclose(current_az, start_angle, abs_tol=1e-9):
+                        print(
+                            f"\n[POS] Starting from remembered extreme {format_angle(start_angle)}"
+                        )
+                    else:
+                        print(
+                            f"\n[POS] Pre-positioning to {format_angle(start_angle)} "
+                            "(no RF capture)"
+                        )
+                        move_rel(start_angle - current_az)
 
-                    print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
+                    if start_angle >= 0:
+                        print("\n[SWEEP] Measurement phase: +max -> 0 -> -max\n")
+                    else:
+                        print("\n[SWEEP] Measurement phase: -max -> 0 -> +max\n")
                     print(f"[SWEEP] Total points: {total_points}")
                     print("[PLOT] Output image will be generated after the final measurement")
 
@@ -1400,9 +1419,14 @@ def run_single_azimuth_sweep(
                             )
                         write_partial_polar_plot(csv_path, plot_png_path)
 
-                    if az > -maxa:
-                        print(f"[POS] Advancing to next azimuth step ({format_angle(-step)})")
-                        move_rel(-step)
+                    if idx + 1 < total_points:
+                        next_az = sweep_angles[idx + 1]
+                        delta_az = next_az - current_az
+                        print(
+                            f"[POS] Advancing to next azimuth step "
+                            f"({format_angle(delta_az)})"
+                        )
+                        move_rel(delta_az)
 
                     idx += 1
                 break
@@ -1459,11 +1483,7 @@ def run_single_azimuth_sweep(
 
                 raise SweepStoppedByUser(action)
 
-        print("\n[POS] Sweep complete - returning to start position")
-        move_rel(+maxa)
-
-        current_az = 0.0
-        print("[POS] Software azimuth reset to 0 deg")
+        print(f"\n[POS] Sweep complete - holding at {format_angle(current_az)}")
 
         if use_woym:
             update_woym_generic(
@@ -1506,6 +1526,8 @@ def run_single_azimuth_sweep(
                 ),
             )
 
+    return current_az
+
 
 def run(params, equip):
     t_start = time()
@@ -1540,6 +1562,15 @@ def run(params, equip):
 
     axis = params.get("axis", "azimuth")
     sweep_mode = params.get("sweep_mode", "unknown")
+    remember_last_azimuth_extreme = coerce_bool(
+        params.get("remember_last_azimuth_extreme"),
+        default=False,
+    )
+    initial_azimuth_deg = float(params.get("initial_azimuth_deg", 0.0))
+    interleaved_has_more_runs = coerce_bool(
+        params.get("interleaved_has_more_runs"),
+        default=False,
+    )
 
     bore = float(params.get("boresight_deg", 0))
     max_angle_values = normalize_max_angle_values(params["max_angle_deg"])
@@ -1619,6 +1650,8 @@ def run(params, equip):
     print(f"      YAML comment       : {yaml_comment}")
     print(f"      Axis               : {axis}")
     print(f"      Sweep mode         : {sweep_mode}")
+    if remember_last_azimuth_extreme:
+        print(f"      Start azimuth      : {format_angle(initial_azimuth_deg)}")
     print(f"      Manual setup order : {manual_setup_order}")
     print(f"      Use WOYM          : {use_woym}")
     print(f"      Device type        : {device_type}")
@@ -1711,6 +1744,7 @@ def run(params, equip):
         current_battery_mv = None
         confirmed_orientation = None
         confirmed_polarisation = None
+        current_azimuth_reference = initial_azimuth_deg if remember_last_azimuth_extreme else 0.0
 
         measurement_dir = os.path.join(outdir, "1_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
@@ -2347,7 +2381,7 @@ def run(params, equip):
                             combo_dir=combo_dir,
                         )
                     try:
-                        run_single_azimuth_sweep(
+                        current_azimuth_reference = run_single_azimuth_sweep(
                             pos=pos,
                             sa=sa,
                             csv_path=csv_path,
@@ -2379,6 +2413,7 @@ def run(params, equip):
                             rbw_hz=rbw_hz,
                             vbw_hz=vbw_hz,
                             battery_mv=battery_mv,
+                            starting_azimuth_deg=current_azimuth_reference,
                         )
                     except SweepStoppedByUser:
                         raise
@@ -2419,6 +2454,11 @@ def run(params, equip):
                     print(
                         f"[TX] {device_type.upper()} manual fallback active; "
                         "leaving RF state unchanged at shutdown"
+                    )
+                elif interleaved_has_more_runs:
+                    print(
+                        "[TX] Leaving HENDRIX_TX RF/state unchanged for the next "
+                        "interleaved DUT handoff"
                     )
                 else:
                     if is_bodyworn_hendrix_tx:
@@ -2521,7 +2561,7 @@ def run(params, equip):
         print("[1_meas_azimuth] STOPPED BY USER")
         print(f"[1_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
         print("====================================================\n")
-        return
+        return current_azimuth_reference
 
     if use_woym:
         update_woym_generic(
@@ -2539,3 +2579,4 @@ def run(params, equip):
     print("[1_meas_azimuth] COMPLETE")
     print(f"[1_meas_azimuth] Total elapsed time: {time() - t_start:.1f} s")
     print("====================================================\n")
+    return current_azimuth_reference

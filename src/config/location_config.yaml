@@ -11,6 +11,7 @@ Rf_control_room_minipc:
         baud: 57600
         az_axis: Y
         el_axis: X
+        el_steps_per_deg: 320
         verbose_logging: false
 
     spectrum_analyser:

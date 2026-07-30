@@ -233,6 +233,79 @@ def build_interleaved_azimuth_param_slices(params: dict) -> list[dict]:
     return slices or [dict(params)]
 
 
+def rotate_list(values: list, offset: int) -> list:
+    if not values:
+        return []
+    normalized_offset = offset % len(values)
+    return values[normalized_offset:] + values[:normalized_offset]
+
+
+def extract_interleaved_azimuth_channel(params: dict):
+    sg_cfg = dict(params.get("sig_gen_1", {}))
+    device_type = str(sg_cfg.get("device_type", "rxcc")).strip().lower()
+
+    if device_type == "wireless-pro-rx":
+        channels = ensure_list(
+            get_first_present(sg_cfg, ("wirepro_freq", "Wpro_freq", "wpro_freq"))
+        )
+    else:
+        channels = ensure_list(sg_cfg.get("channels"))
+
+    if not channels:
+        return None
+    return channels[0]
+
+
+def build_interleaved_azimuth_execution_plan(
+    params: dict,
+    *,
+    dut_count: int,
+) -> list[dict]:
+    param_slices = build_interleaved_azimuth_param_slices(params)
+    if not param_slices or dut_count <= 0:
+        return []
+
+    if dut_count == 1 or len(param_slices) == 1:
+        return [
+            {
+                "dut_slot": dut_slot,
+                "turn_index": slice_index,
+                "total_turns": len(param_slices),
+                "slice_params": slice_params,
+                "channel": extract_interleaved_azimuth_channel(slice_params),
+            }
+            for slice_index, slice_params in enumerate(param_slices, start=1)
+            for dut_slot in range(1, dut_count + 1)
+        ]
+
+    rotated_slices_by_dut = [
+        rotate_list(param_slices, dut_slot - 1)
+        for dut_slot in range(1, dut_count + 1)
+    ]
+
+    plan = []
+    total_turns = len(param_slices)
+    for turn_index in range(total_turns):
+        if turn_index % 2 == 0:
+            dut_slots = range(1, dut_count + 1)
+        else:
+            dut_slots = range(dut_count, 0, -1)
+
+        for dut_slot in dut_slots:
+            slice_params = rotated_slices_by_dut[dut_slot - 1][turn_index]
+            plan.append(
+                {
+                    "dut_slot": dut_slot,
+                    "turn_index": turn_index + 1,
+                    "total_turns": total_turns,
+                    "slice_params": slice_params,
+                    "channel": extract_interleaved_azimuth_channel(slice_params),
+                }
+            )
+
+    return plan
+
+
 def copy_yaml_to_output(yaml_path: Path, outdir: Path):
     if not yaml_path.exists():
         print(f"[WARN] YAML not found for copy: {yaml_path}")
@@ -1004,19 +1077,38 @@ def execute_interleaved_multi_dut_runs(
             raise RuntimeError(f"Test {test_name} missing run() function")
 
         if test_name == "1_meas_azimuth":
-            param_slices = build_interleaved_azimuth_param_slices(base_params)
+            execution_plan = build_interleaved_azimuth_execution_plan(
+                base_params,
+                dut_count=len(contexts),
+            )
         else:
-            param_slices = [base_params]
+            execution_plan = [
+                {
+                    "dut_slot": context["dut_index"],
+                    "turn_index": 1,
+                    "total_turns": 1,
+                    "slice_params": base_params,
+                    "channel": None,
+                }
+                for context in contexts
+            ]
 
-        for slice_index, slice_params in enumerate(param_slices, start=1):
+        shared_azimuth_reference = 0.0
+        total_plan_items = len(execution_plan)
+
+        for plan_index, plan_item in enumerate(execution_plan, start=1):
+            slice_params = plan_item["slice_params"]
+            context = contexts[plan_item["dut_slot"] - 1]
+            channel = plan_item.get("channel")
+            progress_label = f"{plan_index}/{total_plan_items}"
             print("\n" + "=" * 100)
             print(
                 f"➡ Interleaved test: {test_name} "
-                f"(slice {slice_index}/{len(param_slices)})"
+                f"(pass {progress_label})" + (f" CH={channel}" if channel is not None else "")
             )
             print("=" * 100)
 
-            for context in contexts:
+            for context in [context]:
                 use_woym = context["use_woym"]
                 woym = context["woym"]
                 run_woym_path = context["run_woym_path"]
@@ -1030,13 +1122,13 @@ def execute_interleaved_multi_dut_runs(
                         "state": "configuring",
                         "message": (
                             f"Preparing test method '{test_name}' "
-                            f"(slice {slice_index}/{len(param_slices)})"
+                            f"(pass {progress_label})"
                         ),
                         "target": {},
                     }
                     append_recent_event(
                         woym,
-                        f"Starting test method: {test_name} slice {slice_index}/{len(param_slices)}",
+                        f"Starting test method: {test_name} pass {progress_label}",
                     )
                     write_woym(woym, run_woym_path, latest_woym_path)
 
@@ -1060,8 +1152,15 @@ def execute_interleaved_multi_dut_runs(
                 params["woym_path"] = str(run_woym_path) if use_woym and run_woym_path else ""
                 params["latest_woym_path"] = str(latest_woym_path) if use_woym and latest_woym_path else ""
 
+                if test_name == "1_meas_azimuth":
+                    params["remember_last_azimuth_extreme"] = len(contexts) > 1
+                    params["initial_azimuth_deg"] = shared_azimuth_reference
+                    params["interleaved_has_more_runs"] = plan_index < total_plan_items
+
                 try:
-                    test_module.run(params, equip_mgr)
+                    run_result = test_module.run(params, equip_mgr)
+                    if test_name == "1_meas_azimuth" and isinstance(run_result, (int, float)):
+                        shared_azimuth_reference = float(run_result)
                     if use_woym and woym is not None:
                         woym["status"] = "running"
                         woym["error"] = {
@@ -1074,13 +1173,13 @@ def execute_interleaved_multi_dut_runs(
                             "state": "idle",
                             "message": (
                                 f"Completed test method '{test_name}' "
-                                f"(slice {slice_index}/{len(param_slices)})"
+                                f"(pass {progress_label})"
                             ),
                             "target": {},
                         }
                         append_recent_event(
                             woym,
-                            f"Completed test method: {test_name} slice {slice_index}/{len(param_slices)}",
+                            f"Completed test method: {test_name} pass {progress_label}",
                         )
                         write_woym(woym, run_woym_path, latest_woym_path)
                 except Exception as e:

@@ -84,15 +84,49 @@ class DiamondD6050:
         except Exception:
             return None
 
+    def _axis_config(self, logical_axis="azimuth"):
+        axis_name = str(logical_axis).strip().lower()
+        if axis_name in {"azimuth", "az", self.az_axis.lower()}:
+            return {
+                "logical_name": "azimuth",
+                "controller_axis": self.az_axis,
+                "steps_per_deg": self.az_steps_per_deg,
+                "log_prefix": "AZ",
+            }
+        if axis_name in {"elevation", "vertical", "el", self.el_axis.lower()}:
+            return {
+                "logical_name": "elevation",
+                "controller_axis": self.el_axis,
+                "steps_per_deg": self.el_steps_per_deg,
+                "log_prefix": "EL",
+            }
+        raise ValueError(f"Unsupported positioner axis: {logical_axis!r}")
+
+    def _steps_to_angle_deg(self, cfg, steps):
+        if steps is None:
+            return None
+        if cfg["logical_name"] == "azimuth":
+            return -(steps / float(cfg["steps_per_deg"]))
+        return steps / float(cfg["steps_per_deg"])
+
+    def _angle_to_raw_steps(self, cfg, angle_deg):
+        if cfg["logical_name"] == "azimuth":
+            return int(round(-angle_deg * cfg["steps_per_deg"]))
+        return int(round(angle_deg * cfg["steps_per_deg"]))
+
     # -----------------------------------------------------------
     # Angle read with correct RF sign convention
     # -----------------------------------------------------------
     def get_current_az_deg(self):
-        steps = self._read_steps(self.az_axis)
-        if steps is None:
-            return None
-        # NEGATE the angle so CW = negative
-        return -(steps / float(self.az_steps_per_deg))
+        return self.get_current_axis_deg("azimuth")
+
+    def get_current_el_deg(self):
+        return self.get_current_axis_deg("elevation")
+
+    def get_current_axis_deg(self, logical_axis="azimuth"):
+        cfg = self._axis_config(logical_axis)
+        steps = self._read_steps(cfg["controller_axis"])
+        return self._steps_to_angle_deg(cfg, steps)
 
     # -----------------------------------------------------------
     # Wait for motion start
@@ -147,17 +181,11 @@ class DiamondD6050:
 
     def _wait_for_axis_motion_start_fallback(self, axis, initial_angle):
         self._vprint("[POS] Falling back to encoder-based motion start detection...")
-
-        if axis != self.az_axis:
-            return {
-                "timestamp": time.time(),
-                "response": "",
-                "method": "command_timestamp_fallback",
-            }
+        cfg = self._axis_config(axis)
 
         for _ in range(25):
             time.sleep(0.2)
-            ang = self.get_current_az_deg()
+            ang = self.get_current_axis_deg(cfg["logical_name"])
             if ang is None:
                 continue
             if abs(ang - initial_angle) > 0.2:
@@ -178,21 +206,22 @@ class DiamondD6050:
     # -----------------------------------------------------------
     # Wait for motion stop
     # -----------------------------------------------------------
-    def wait_until_stopped(self):
+    def wait_until_stopped(self, axis="azimuth"):
+        cfg = self._axis_config(axis)
         self._vprint("[POS] Monitoring movement via encoder...")
 
         last = None
         stable = 0
 
         while True:
-            ang = self.get_current_az_deg()
+            ang = self.get_current_axis_deg(cfg["logical_name"])
             if ang is None:
                 self._vprint("[POS] Encoder read failed, retrying...")
                 time.sleep(0.2)
                 continue
 
             if self.verbose_logging:
-                steps = int(-ang * self.az_steps_per_deg)  # invert back for raw display
+                steps = self._angle_to_raw_steps(cfg, ang)
                 print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f} deg)")
 
             if last is not None:
@@ -211,11 +240,18 @@ class DiamondD6050:
     # Azimuth move (relative)
     # -----------------------------------------------------------
     def start_azimuth_move(self, deg, motion_start_timeout_s=15.0):
-        steps = int(round(deg * self.az_steps_per_deg))
-        cmd = f"{self.az_axis}0RN{steps:+d}"
-        print(f"[DiamondD6050] AZ MOVE {deg:+.2f} deg -> {cmd}")
+        return self.start_axis_move("azimuth", deg, motion_start_timeout_s=motion_start_timeout_s)
 
-        initial_angle = self.get_current_az_deg()
+    def start_elevation_move(self, deg, motion_start_timeout_s=15.0):
+        return self.start_axis_move("elevation", deg, motion_start_timeout_s=motion_start_timeout_s)
+
+    def start_axis_move(self, axis, deg, motion_start_timeout_s=15.0):
+        cfg = self._axis_config(axis)
+        steps = int(round(deg * cfg["steps_per_deg"]))
+        cmd = f"{cfg['controller_axis']}0RN{steps:+d}"
+        print(f"[DiamondD6050] {cfg['log_prefix']} MOVE {deg:+.2f} deg -> {cmd}")
+
+        initial_angle = self.get_current_axis_deg(cfg["logical_name"])
         if initial_angle is None:
             initial_angle = 0.0
 
@@ -227,12 +263,12 @@ class DiamondD6050:
         )
 
         start_info = self._wait_for_axis_motion_start_response(
-            self.az_axis,
+            cfg["controller_axis"],
             motion_start_timeout_s,
         )
         if start_info["timestamp"] is None:
             start_info = self._wait_for_axis_motion_start_fallback(
-                self.az_axis,
+                cfg["logical_name"],
                 initial_angle,
             )
 
@@ -247,8 +283,15 @@ class DiamondD6050:
         return start_info
 
     def go_azimuth(self, deg):
-        self.start_azimuth_move(deg)
-        final = self.wait_until_stopped()
+        return self.go_axis("azimuth", deg)
 
-        print(f"[DiamondD6050] AZ MOVE complete at {final:+.2f} deg")
+    def go_elevation(self, deg):
+        return self.go_axis("elevation", deg)
+
+    def go_axis(self, axis, deg):
+        cfg = self._axis_config(axis)
+        self.start_axis_move(cfg["logical_name"], deg)
+        final = self.wait_until_stopped(cfg["logical_name"])
+
+        print(f"[DiamondD6050] {cfg['log_prefix']} MOVE complete at {final:+.2f} deg")
         return True
