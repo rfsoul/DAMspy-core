@@ -3,6 +3,10 @@ import re
 import serial
 
 
+class PositionerMotionError(RuntimeError):
+    """Raised when the controller accepts a move command but motion cannot be verified."""
+
+
 class DiamondD6050:
     """
     Diamond Engineering D6050 driver
@@ -206,28 +210,64 @@ class DiamondD6050:
     # -----------------------------------------------------------
     # Wait for motion stop
     # -----------------------------------------------------------
-    def wait_until_stopped(self, axis="azimuth"):
+    def wait_until_stopped(
+        self,
+        axis="azimuth",
+        *,
+        initial_angle_deg=None,
+        requested_deg=0.0,
+        encoder_read_timeout_s=5.0,
+        no_motion_timeout_s=5.0,
+    ):
         cfg = self._axis_config(axis)
         self._vprint("[POS] Monitoring movement via encoder...")
 
         last = None
         stable = 0
+        last_encoder_read_at = time.monotonic()
+        motion_required = abs(float(requested_deg)) > 1e-9
+        motion_detected = not motion_required
+        initial_angle = initial_angle_deg
+        motion_threshold_deg = 0.2
+        no_motion_deadline = (
+            time.monotonic() + max(0.0, float(no_motion_timeout_s))
+            if motion_required
+            else None
+        )
 
         while True:
+            now = time.monotonic()
             ang = self.get_current_axis_deg(cfg["logical_name"])
             if ang is None:
+                if (now - last_encoder_read_at) >= max(0.0, float(encoder_read_timeout_s)):
+                    raise PositionerMotionError(
+                        f"{cfg['log_prefix']} encoder read timed out while waiting for motion"
+                    )
                 self._vprint("[POS] Encoder read failed, retrying...")
                 time.sleep(0.2)
                 continue
+
+            last_encoder_read_at = now
 
             if self.verbose_logging:
                 steps = self._angle_to_raw_steps(cfg, ang)
                 print(f"[POS] Encoder: {steps:+7d} steps  ({ang:+6.2f} deg)")
 
+            if motion_required and not motion_detected:
+                if initial_angle is None:
+                    initial_angle = ang
+                if abs(ang - initial_angle) > motion_threshold_deg:
+                    motion_detected = True
+                    self._vprint(f"[POS] Motion verified at {ang:+.2f} deg")
+                elif no_motion_deadline is not None and now >= no_motion_deadline:
+                    raise PositionerMotionError(
+                        f"{cfg['log_prefix']} move command was accepted but no encoder motion was detected"
+                    )
+
             if last is not None:
                 if abs(ang - last) < 0.2:
                     stable += 1
-                    if stable >= 6:
+                    if stable >= 6 and (motion_detected or not motion_required):
                         self._vprint(f"[POS] Movement stopped at {ang:+.2f} deg")
                         return ang
                 else:
@@ -278,6 +318,7 @@ class DiamondD6050:
                 "command_timestamp": command_timestamp,
                 "requested_deg": deg,
                 "requested_steps": steps,
+                "initial_angle_deg": initial_angle,
             }
         )
         return start_info
@@ -290,8 +331,12 @@ class DiamondD6050:
 
     def go_axis(self, axis, deg):
         cfg = self._axis_config(axis)
-        self.start_axis_move(cfg["logical_name"], deg)
-        final = self.wait_until_stopped(cfg["logical_name"])
+        start_info = self.start_axis_move(cfg["logical_name"], deg)
+        final = self.wait_until_stopped(
+            cfg["logical_name"],
+            initial_angle_deg=start_info.get("initial_angle_deg"),
+            requested_deg=deg,
+        )
 
         print(f"[DiamondD6050] {cfg['log_prefix']} MOVE complete at {final:+.2f} deg")
         return True

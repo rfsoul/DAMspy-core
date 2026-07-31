@@ -3,7 +3,7 @@ dut_definitions:
     product: "rxcc"
     hardware_config: "V6"
     serial_number: "#22_2F96E505BDE4878D"
-    foldername_comment: ""
+    foldername_comment: "powerontest"
 
   DUT2:
     product: "hendrix-tx"
@@ -14,7 +14,7 @@ dut_definitions:
 DUTS: [DUT1] #[DUT1, DUT2]
 
 yaml_comment: ""
-orientations: [ori2, ori1]  # [ori1, ori2]
+orientations: [ori4]  # [ori1, ori2]
 orientation_photo_location: "C:/Git/DAMspy-core/src/DAMspy_logs/orientations/hendrix_tx"
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
@@ -46,7 +46,7 @@ move_start_timeout_s: 15
 
 height_m: 1.5
 polarisation: [H] #[H, V]
-orientation_change_mode: manual   # manual = operator changes DUT orientation; auto = prompt for current orientation then drive elevation deltas from orientation_elevation_deg
+orientation_change_mode: auto   # manual = operator changes DUT orientation; auto = prompt for current orientation then drive elevation deltas from orientation_elevation_deg
 orientation_elevation_deg:
   ori4: 0
   ori1: -90
@@ -66,7 +66,7 @@ sig_gen_1:  # rode rxcc device
   #wirepro_freq: [50]
   power_levels: [10]
   #wirepro_power: [4]
-  CTX: [1]   #not for wirepro
+  #CTX: [1]   #not for wirepro
   #wirepro_freq: [50]  # Wireless Pro RX only: 2400 MHz + this MHz value
   #wirepro_power: [4]  # Wireless Pro RX only: dBm, may be negative
   antennas: ["main", "secondary"] #["main", "secondary"]
