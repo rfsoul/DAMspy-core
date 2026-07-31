@@ -29,6 +29,12 @@ class DiamondD6050:
 
         self.verbose_logging = bool(cfg.get("verbose_logging", False))
 
+        self.ser = None
+        self.open()
+
+    def open(self):
+        if self.ser is not None:
+            return
         self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
         print(f"[DiamondD6050] Connected on {self.port} @ {self.baud}")
 
@@ -38,6 +44,15 @@ class DiamondD6050:
             "X0P3,163,81,10", "X0H4", "X0B500", "X0E3000", "X0S8"
         ]:
             self._send(cmd)
+
+    def close(self):
+        if self.ser is None:
+            return
+        try:
+            self.ser.close()
+        finally:
+            self.ser = None
+            print(f"[DiamondD6050] Closed {self.port}")
 
     # -----------------------------------------------------------
     # Logging helper
@@ -49,7 +64,14 @@ class DiamondD6050:
     # -----------------------------------------------------------
     # Low-level
     # -----------------------------------------------------------
+    def _require_open(self):
+        if self.ser is None:
+            raise RuntimeError(
+                f"Positioner serial port {self.port} is not open. Call open() before use."
+            )
+
     def _read_response(self, timeout_s=0.3, idle_after_data_s=0.05):
+        self._require_open()
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         last_data_at = None
         chunks = []
@@ -69,6 +91,7 @@ class DiamondD6050:
         return "".join(chunks)
 
     def _send(self, cmd, response_timeout_s=0.3, idle_after_data_s=0.05, clear_input=False):
+        self._require_open()
         if clear_input:
             self.ser.reset_input_buffer()
         self.ser.write((cmd + "\r").encode("ascii"))
@@ -87,6 +110,16 @@ class DiamondD6050:
             return int(nums[-1])
         except Exception:
             return None
+
+    def get_current_az_steps(self):
+        return self.get_current_axis_steps("azimuth")
+
+    def get_current_el_steps(self):
+        return self.get_current_axis_steps("elevation")
+
+    def get_current_axis_steps(self, logical_axis="azimuth"):
+        cfg = self._axis_config(logical_axis)
+        return self._read_steps(cfg["controller_axis"])
 
     def _axis_config(self, logical_axis="azimuth"):
         axis_name = str(logical_axis).strip().lower()
@@ -118,6 +151,84 @@ class DiamondD6050:
             return int(round(-angle_deg * cfg["steps_per_deg"]))
         return int(round(angle_deg * cfg["steps_per_deg"]))
 
+    def _motion_threshold_deg(self, cfg, requested_deg=0.0):
+        requested_magnitude = abs(float(requested_deg))
+        one_step_deg = 1.0 / float(cfg["steps_per_deg"])
+        if requested_magnitude <= 1e-9:
+            return 0.2
+        return max(one_step_deg / 2.0, min(0.2, requested_magnitude / 2.0))
+
+    def _toggle_lines_and_break(self):
+        self._require_open()
+        try:
+            self.ser.dtr = False
+            self.ser.rts = False
+            time.sleep(0.2)
+            self.ser.dtr = True
+            self.ser.rts = True
+            time.sleep(0.2)
+            self.ser.send_break(duration=0.2)
+            time.sleep(0.2)
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+        except Exception as exc:
+            self._vprint(f"[DiamondD6050] Line toggle/BRK not supported: {exc}")
+
+    def unstick_axis_without_motion(self, logical_axis="azimuth"):
+        cfg = self._axis_config(logical_axis)
+        axis = cfg["controller_axis"]
+        axis_name = cfg["logical_name"]
+
+        if axis_name == "azimuth":
+            print("[DiamondD6050] Applying azimuth unstick commands without motion")
+            for cmd in [
+                f"{axis}0N-0cz00",
+                f"{axis}0B200",
+                f"{axis}0P3,200,75,0",
+                f"{axis}0H4",
+                f"{axis}0E5000",
+                f"{axis}0S5",
+            ]:
+                self._send(cmd)
+            status = self._send(f"{axis}0").strip()
+            position = self._send(f"{axis}0m").strip()
+            if "L" in status.upper():
+                print("[DiamondD6050] Azimuth limit latched; applying line toggle only")
+                self._toggle_lines_and_break()
+                for cmd in [
+                    f"{axis}0N-0cz00",
+                    f"{axis}0B200",
+                    f"{axis}0P3,200,75,0",
+                    f"{axis}0H4",
+                    f"{axis}0E5000",
+                    f"{axis}0S5",
+                ]:
+                    self._send(cmd)
+                status = self._send(f"{axis}0").strip()
+                position = self._send(f"{axis}0m").strip()
+            return {"status": status, "position": position}
+
+        print("[DiamondD6050] Applying elevation unstick commands without motion")
+        for cmd in [
+            "GGN-0cz00",
+            f"{axis}0H4",
+            f"{axis}0P3,200,100,10",
+            f"{axis}0B100",
+            f"{axis}0E1200",
+            f"{axis}0S7",
+        ]:
+            self._send(cmd)
+        status = self._send(f"{axis}0").strip()
+        home_sw = self._send(f"{axis}0I1").strip()
+        max_sw = self._send(f"{axis}0I3").strip()
+        position = self._send(f"{axis}0m").strip()
+        return {
+            "status": status,
+            "home_switch": home_sw,
+            "max_switch": max_sw,
+            "position": position,
+        }
+
     # -----------------------------------------------------------
     # Angle read with correct RF sign convention
     # -----------------------------------------------------------
@@ -129,7 +240,7 @@ class DiamondD6050:
 
     def get_current_axis_deg(self, logical_axis="azimuth"):
         cfg = self._axis_config(logical_axis)
-        steps = self._read_steps(cfg["controller_axis"])
+        steps = self.get_current_axis_steps(cfg["logical_name"])
         return self._steps_to_angle_deg(cfg, steps)
 
     # -----------------------------------------------------------
@@ -186,13 +297,14 @@ class DiamondD6050:
     def _wait_for_axis_motion_start_fallback(self, axis, initial_angle):
         self._vprint("[POS] Falling back to encoder-based motion start detection...")
         cfg = self._axis_config(axis)
+        motion_threshold_deg = self._motion_threshold_deg(cfg, 0.0)
 
         for _ in range(25):
             time.sleep(0.2)
             ang = self.get_current_axis_deg(cfg["logical_name"])
             if ang is None:
                 continue
-            if abs(ang - initial_angle) > 0.2:
+            if abs(ang - initial_angle) > motion_threshold_deg:
                 self._vprint("[POS] Motion start inferred from encoder change.")
                 return {
                     "timestamp": time.time(),
@@ -228,7 +340,7 @@ class DiamondD6050:
         motion_required = abs(float(requested_deg)) > 1e-9
         motion_detected = not motion_required
         initial_angle = initial_angle_deg
-        motion_threshold_deg = 0.2
+        motion_threshold_deg = self._motion_threshold_deg(cfg, requested_deg)
         no_motion_deadline = (
             time.monotonic() + max(0.0, float(no_motion_timeout_s))
             if motion_required

@@ -69,8 +69,9 @@ class _FakeSignalGenerator:
 
 
 class _FakeSpectrumAnalyser:
-    def __init__(self):
+    def __init__(self, peak_reads=None):
         self.calls = []
+        self.peak_reads = list(peak_reads or [(2_400_000_000.0, -30.0)])
 
     def configure_narrowband(self, center_hz, span_hz, rbw_hz, vbw_hz):
         self.calls.append(
@@ -88,14 +89,64 @@ class _FakeSpectrumAnalyser:
             "vbw_hz": vbw_hz,
         }
 
+    def read_peak_instantaneous(self):
+        if len(self.peak_reads) > 1:
+            return self.peak_reads.pop(0)
+        return self.peak_reads[0]
+
 
 class _FakePositioner:
-    pass
+    def __init__(
+        self,
+        az_steps=10,
+        el_steps=10,
+        az_steps_per_deg=800,
+        el_steps_per_deg=320,
+        *,
+        block_elevation_move=False,
+    ):
+        self.az_steps = az_steps
+        self.el_steps = el_steps
+        self.az_steps_per_deg = az_steps_per_deg
+        self.el_steps_per_deg = el_steps_per_deg
+        self.block_elevation_move = block_elevation_move
+        self.azimuth_moves = []
+        self.elevation_moves = []
+        self.unstick_calls = []
+        self.open_calls = 0
+        self.close_calls = 0
+        self.is_open = True
+
+    def get_current_az_steps(self):
+        return self.az_steps
+
+    def get_current_el_steps(self):
+        return self.el_steps
+
+    def open(self):
+        self.open_calls += 1
+        self.is_open = True
+
+    def close(self):
+        self.close_calls += 1
+        self.is_open = False
+
+    def go_azimuth(self, delta_deg):
+        self.azimuth_moves.append(delta_deg)
+        self.az_steps += int(round(delta_deg * self.az_steps_per_deg))
+
+    def go_elevation(self, delta_deg):
+        self.elevation_moves.append(delta_deg)
+        if not self.block_elevation_move:
+            self.el_steps += int(round(delta_deg * self.el_steps_per_deg))
+
+    def unstick_axis_without_motion(self, logical_axis="azimuth"):
+        self.unstick_calls.append(logical_axis)
 
 
 class _FakeEquipment:
-    def __init__(self):
-        self.positioner = _FakePositioner()
+    def __init__(self, positioner=None):
+        self.positioner = positioner or _FakePositioner()
         self.spectrum_analyser = _FakeSpectrumAnalyser()
         self.signal_generator = _FakeSignalGenerator()
 
@@ -119,6 +170,12 @@ class FastMeasAzimuthHelpersTests(unittest.TestCase):
         self.assertEqual(
             fast_meas_azimuth.normalize_hendrix_tx_mode("bodyworn"),
             "usb_disconnected",
+        )
+
+    def test_normalize_hendrix_tx_mode_accepts_usb_connected_alias(self):
+        self.assertEqual(
+            fast_meas_azimuth.normalize_hendrix_tx_mode("usb_connected"),
+            "always_in_cradle",
         )
 
     def test_normalize_fastmode_mode_defaults_to_default(self):
@@ -179,8 +236,105 @@ class FastMeasAzimuthHelpersTests(unittest.TestCase):
             "ccw",
         )
 
+    def test_read_positioner_startup_state_detects_double_zero_reset_signature(self):
+        state = fast_meas_azimuth.read_positioner_startup_state(
+            _FakePositioner(az_steps=0, el_steps=0),
+            azimuth_software_zero_steps=10,
+            elevation_software_zero_steps=10,
+        )
+
+        self.assertTrue(state["double_zero_reset_signature"])
+        self.assertEqual(state["azimuth_logical_deg"], -0.0125)
+        self.assertEqual(state["elevation_logical_deg"], -0.03125)
+
+    def test_infer_auto_orientation_from_elevation_uses_nearest_angle(self):
+        orientation, angle_deg = fast_meas_azimuth.infer_auto_orientation_from_elevation(
+            -88.9,
+            {"ori4": 0.0, "ori1": -90.0, "ori2": -180.0},
+        )
+
+        self.assertEqual((orientation, angle_deg), ("ori1", -90.0))
+
+    def test_recover_axis_from_controller_zero_moves_axis_to_offset(self):
+        pos = _FakePositioner(az_steps=0, el_steps=0)
+
+        result = fast_meas_azimuth.recover_axis_from_controller_zero(
+            pos,
+            logical_axis="azimuth",
+            offset_steps=10,
+        )
+
+        self.assertEqual(result["result"], "offset_applied")
+        self.assertEqual(pos.az_steps, 10)
+        self.assertEqual(pos.azimuth_moves, [0.0125])
+        self.assertEqual(pos.unstick_calls, [])
+
+    def test_recover_axis_from_controller_zero_unsticks_and_retries_when_needed(self):
+        pos = _FakePositioner(az_steps=0, el_steps=0, block_elevation_move=True)
+
+        result = fast_meas_azimuth.recover_axis_from_controller_zero(
+            pos,
+            logical_axis="elevation",
+            offset_steps=10,
+        )
+
+        self.assertEqual(result["result"], "still_stuck")
+        self.assertEqual(pos.unstick_calls, ["elevation"])
+        self.assertEqual(pos.elevation_moves, [0.03125, 0.03125])
+
+    def test_release_and_reacquire_positioner_for_startup_recovery(self):
+        pos = _FakePositioner()
+
+        released = fast_meas_azimuth.release_positioner_for_startup_recovery(pos)
+        reacquired = fast_meas_azimuth.reacquire_positioner_after_startup_recovery(pos)
+
+        self.assertTrue(released)
+        self.assertTrue(reacquired)
+        self.assertEqual(pos.close_calls, 1)
+        self.assertEqual(pos.open_calls, 1)
+        self.assertTrue(pos.is_open)
+
+    def test_build_startup_recovery_failure_message_lists_axis_results(self):
+        message = fast_meas_azimuth.build_startup_recovery_failure_message(
+            base_message="base",
+            recovery_results=[
+                {"axis": "azimuth", "result": "offset_applied", "after_steps": 10},
+                {"axis": "elevation", "result": "still_stuck", "after_steps": 0},
+            ],
+        )
+
+        self.assertIn("Azimuth: moved to 10 steps", message)
+        self.assertIn("Elevation: still at 0 steps", message)
+
+    def test_enforce_minimum_signal_level_before_sweep_prompts_until_signal_recovers(self):
+        sa = _FakeSpectrumAnalyser(
+            peak_reads=[
+                (2_400_000_000.0, -95.0),
+                (2_400_000_000.0, -84.0),
+            ]
+        )
+
+        with mock.patch.object(fast_meas_azimuth, "prompt_manual_change") as prompt_manual_change, \
+             mock.patch("sys.stdout", new=io.StringIO()):
+            pk_f_hz, rx_dbm = fast_meas_azimuth.enforce_minimum_signal_level_before_sweep(
+                read_peak_once=sa.read_peak_instantaneous,
+                minimum_signal_dbm=-90.0,
+                channel=7,
+                tx_freq=2_400_000_000.0,
+                antenna="main",
+                power_level=10,
+                active_dut_display="DUT1 serial SN123",
+            )
+
+        self.assertEqual(prompt_manual_change.call_count, 1)
+        self.assertEqual((pk_f_hz, rx_dbm), (2_400_000_000.0, -84.0))
+
 
 class FastMeasAzimuthRunTests(unittest.TestCase):
+    @staticmethod
+    def _az_steps_for_logical_deg(logical_angle_deg, *, offset_steps=10, steps_per_deg=800):
+        return int(round(offset_steps + logical_angle_deg * steps_per_deg))
+
     def _make_params(self, output_dir, *, channels, fastmode_mode=None):
         params = {
             "output_dir": output_dir,
@@ -216,7 +370,7 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         return params
 
     def test_run_fastmode_fast_prompts_once_and_alternates_direction(self):
-        equip = _FakeEquipment()
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=10))
         sweep_calls = []
 
         def fake_run_single_azimuth_sweep(**kwargs):
@@ -236,23 +390,12 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
             with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
                  mock.patch.object(
                      fast_meas_azimuth,
-                     "prompt_fastmode_positioner_start",
-                     return_value=2,
-                 ) as prompt_positioner_start, \
-                 mock.patch.object(
-                     fast_meas_azimuth,
-                     "prompt_rf_stop_override",
-                     return_value=False,
-                 ), \
-                 mock.patch.object(
-                     fast_meas_azimuth,
                      "run_single_azimuth_sweep",
                      side_effect=fake_run_single_azimuth_sweep,
                  ), \
                  mock.patch("sys.stdout", new=io.StringIO()):
                 fast_meas_azimuth.run(params, equip)
 
-        self.assertEqual(prompt_positioner_start.call_count, 1)
         self.assertEqual(
             [fast_meas_azimuth.infer_fastmode_position_slot(call["initial_position_deg"], call["maxa"]) for call in sweep_calls],
             [2, 1],
@@ -268,9 +411,16 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertTrue(
             all(call["return_to_boresight_after_sweep"] is False for call in sweep_calls)
         )
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
 
-    def test_run_fastmode_fast_respects_negative_extreme_selection(self):
-        equip = _FakeEquipment()
+    def test_run_fastmode_fast_detects_negative_extreme_from_positioner(self):
+        equip = _FakeEquipment(
+            positioner=_FakePositioner(
+                az_steps=self._az_steps_for_logical_deg(-170.0),
+                el_steps=10,
+            )
+        )
         sweep_calls = []
 
         def fake_run_single_azimuth_sweep(**kwargs):
@@ -290,16 +440,6 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
             with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
                  mock.patch.object(
                      fast_meas_azimuth,
-                     "prompt_fastmode_positioner_start",
-                     return_value=1,
-                 ), \
-                 mock.patch.object(
-                     fast_meas_azimuth,
-                     "prompt_rf_stop_override",
-                     return_value=False,
-                 ), \
-                 mock.patch.object(
-                     fast_meas_azimuth,
                      "run_single_azimuth_sweep",
                      side_effect=fake_run_single_azimuth_sweep,
                  ), \
@@ -312,7 +452,7 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertFalse(sweep_calls[0]["return_to_boresight_after_sweep"])
 
     def test_run_default_mode_keeps_return_to_boresight_behavior(self):
-        equip = _FakeEquipment()
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=10))
         sweep_calls = []
 
         def fake_run_single_azimuth_sweep(**kwargs):
@@ -327,22 +467,12 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
             with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
                  mock.patch.object(
                      fast_meas_azimuth,
-                     "prompt_fastmode_positioner_start",
-                 ) as prompt_positioner_start, \
-                 mock.patch.object(
-                     fast_meas_azimuth,
-                     "prompt_rf_stop_override",
-                     return_value=False,
-                 ), \
-                 mock.patch.object(
-                     fast_meas_azimuth,
                      "run_single_azimuth_sweep",
                      side_effect=fake_run_single_azimuth_sweep,
                  ), \
                  mock.patch("sys.stdout", new=io.StringIO()):
                 fast_meas_azimuth.run(params, equip)
 
-        self.assertEqual(prompt_positioner_start.call_count, 0)
         self.assertEqual(
             [call["initial_position_deg"] for call in sweep_calls],
             [0.0, 0.0],
@@ -354,9 +484,11 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertTrue(
             all(call["return_to_boresight_after_sweep"] is True for call in sweep_calls)
         )
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
 
     def test_run_rxcc_usb_disconnected_uses_usb_update_flow(self):
-        equip = _FakeEquipment()
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=10))
         sweep_calls = []
         usb_connect_calls = []
 
@@ -403,6 +535,152 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
         self.assertTrue(usb_connect_calls[-1]["return_from_rf"])
+
+    def test_run_recovers_both_axes_from_double_zero_and_continues(self):
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=0, el_steps=0))
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                channels=[7],
+                fastmode_mode="fast",
+            )
+            with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs) or {"final_angle_deg": 0.0},
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                fast_meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.positioner.az_steps, 10)
+        self.assertEqual(equip.positioner.el_steps, 10)
+        self.assertEqual(equip.positioner.close_calls, 1)
+        self.assertEqual(equip.positioner.open_calls, 1)
+        self.assertEqual(equip.positioner.azimuth_moves, [0.0125])
+        self.assertEqual(equip.positioner.elevation_moves, [0.03125])
+        self.assertTrue(equip.positioner.is_open)
+        self.assertEqual(len(sweep_calls), 1)
+        self.assertEqual(sweep_calls[0]["initial_position_deg"], 0.0)
+
+    def test_run_fails_if_one_axis_remains_stuck_after_auto_unstick_retry(self):
+        equip = _FakeEquipment(
+            positioner=_FakePositioner(
+                az_steps=0,
+                el_steps=0,
+                block_elevation_move=True,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                channels=[7],
+                fastmode_mode="fast",
+            )
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Elevation: still at 0 steps after unstick and retry",
+                ):
+                    fast_meas_azimuth.run(params, equip)
+        self.assertEqual(equip.positioner.az_steps, 10)
+        self.assertEqual(equip.positioner.el_steps, 0)
+        self.assertEqual(equip.positioner.unstick_calls, ["elevation"])
+        self.assertEqual(equip.positioner.close_calls, 1)
+        self.assertEqual(equip.positioner.open_calls, 0)
+        self.assertFalse(equip.positioner.is_open)
+
+    def test_run_auto_orientation_detects_current_elevation_without_prompt(self):
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=-28790))
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                channels=[7],
+                fastmode_mode="fast",
+            )
+            params["orientation_change_mode"] = "auto"
+            params["orientation_elevation_deg"] = {
+                "ori4": 0,
+                "ori1": -90,
+                "ori2": -180,
+                "ori3": -270,
+            }
+            params["orientations"] = ["ori1"]
+            with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "prompt_rf_stop_override",
+                     return_value=False,
+                 ), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs) or {"final_angle_deg": 0.0},
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                    fast_meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.positioner.elevation_moves, [])
+        self.assertEqual(len(sweep_calls), 1)
+
+    def test_run_connected_rf_path_does_not_prompt_to_stop_between_sweeps(self):
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=10))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                channels=[7, 8],
+                fastmode_mode="fast",
+            )
+            with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "prompt_rf_stop_override",
+                     side_effect=AssertionError("unexpected mid-run RF stop prompt"),
+                 ), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     return_value={"final_angle_deg": 0.0},
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                fast_meas_azimuth.run(params, equip)
+
+        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.rf_off_calls, 1)
+
+    def test_run_auto_orientation_returns_elevation_to_starting_position(self):
+        equip = _FakeEquipment(positioner=_FakePositioner(az_steps=10, el_steps=10))
+        sweep_calls = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            params = self._make_params(
+                tmpdir,
+                channels=[7],
+                fastmode_mode="fast",
+            )
+            params["orientation_change_mode"] = "auto"
+            params["orientation_elevation_deg"] = {
+                "ori4": 0,
+                "ori1": -90,
+            }
+            params["orientations"] = ["ori4", "ori1"]
+            with mock.patch.object(fast_meas_azimuth, "prompt_manual_change"), \
+                 mock.patch.object(
+                     fast_meas_azimuth,
+                     "run_single_azimuth_sweep",
+                     side_effect=lambda **kwargs: sweep_calls.append(kwargs) or {"final_angle_deg": 0.0},
+                 ), \
+                 mock.patch("sys.stdout", new=io.StringIO()):
+                fast_meas_azimuth.run(params, equip)
+
+        self.assertEqual(len(sweep_calls), 2)
+        self.assertEqual(equip.positioner.elevation_moves, [-90.0, 90.0])
 
 
 if __name__ == "__main__":

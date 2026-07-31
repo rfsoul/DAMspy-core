@@ -77,5 +77,5 @@ def move_elevation_rel(deg: float):
 if __name__ == "__main__":
     time.sleep(2)
     # Try a small move first
-    move_elevation_rel(10.0)
+    move_elevation_rel(.0125)
     # move_elevation_rel(-10.0)

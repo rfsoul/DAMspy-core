@@ -2,7 +2,7 @@ dut_definitions:
   DUT1:
     product: "rxcc"
     hardware_config: "V6"
-    serial_number: "#22_2F96E505BDE4878D"
+    serial_number: "#31_FCF4"
     foldername_comment: "powerontest"
 
   DUT2:
@@ -14,7 +14,7 @@ dut_definitions:
 DUTS: [DUT1] #[DUT1, DUT2]
 
 yaml_comment: ""
-orientations: [ori4]  # [ori1, ori2]
+orientations: [ori4, ori1]  # [ori1, ori2]
 orientation_photo_location: "C:/Git/DAMspy-core/src/DAMspy_logs/orientations/hendrix_tx"
 orientation_description: #with usb on left the left tx slot is slot 1
   ori1: "Vert usb down Tx in slot 1 facing boresight"
@@ -59,7 +59,7 @@ lowest_level: -80 #dBm
 sig_gen_1:  # rode rxcc device
   device_type: "rxcc"  # "rxcc", "hendrix_tx", "hendrix_rx", or "wireless-pro-rx"
   manual_fallback: true
-  tx_mode: "usb_disconnected"  # Hendrix TX only: "always_in_cradle" or "usb_disconnected" (legacy "bodyworn" still accepted)
+  tx_mode: "usb_connected"  # Hendrix TX only: "always_in_cradle" or "usb_disconnected" or "usb_connected" (legacy "bodyworn" still accepted)
   tx_cable_loss: 0 # CW generated inside the product 
   tx_power: 18 #in dBm
   channels: [0, 40, 80]   # [0, 20, 40, 60, 80]

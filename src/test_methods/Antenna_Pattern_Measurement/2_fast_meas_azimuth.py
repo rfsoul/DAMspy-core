@@ -27,6 +27,7 @@ VALID_SIG_GEN_DEVICE_TYPES = {"rxcc", "hendrix_tx", "hendrix_rx", "wireless-pro-
 VALID_HENDRIX_TX_MODES = {"always_in_cradle", "usb_disconnected"}
 LEGACY_HENDRIX_TX_MODE_ALIASES = {
     "bodyworn": "usb_disconnected",
+    "usb_connected": "always_in_cradle",
 }
 VALID_MANUAL_SETUP_ORDERS = {"outer", "inner"}
 VALID_ORIENTATION_CHANGE_MODES = {"manual", "auto"}
@@ -37,6 +38,11 @@ DEFAULT_FASTMODE_MODE = "default"
 DEFAULT_FAST_SWEEP_SPEED_DEG_PER_S = 3.75
 DEFAULT_FAST_MOVE_START_TIMEOUT_S = 15.0
 DEFAULT_FAST_WOYM_UPDATE_INTERVAL_S = 1.0
+ENFORCED_MIN_SIGNAL_DBM = -90.0
+DEFAULT_AZIMUTH_STEPS_PER_DEG = 800.0
+DEFAULT_ELEVATION_STEPS_PER_DEG = 320.0
+DEFAULT_POSITIONER_SOFTWARE_ZERO_OFFSET_STEPS = 10
+DEFAULT_POSITION_SLOT_TOLERANCE_STEPS = 100
 NON_RXCC_ANTENNA_LABEL = "n/a"
 NON_RXCC_ANTENNA_TOKEN = "na"
 
@@ -150,7 +156,7 @@ def normalize_hendrix_tx_mode(value) -> str:
         raise ValueError(
             "sig_gen_1.tx_mode must be one of "
             f"{sorted(VALID_HENDRIX_TX_MODES)} "
-            "(legacy alias 'bodyworn' is also accepted), "
+            "(legacy aliases 'bodyworn' and 'usb_connected' are also accepted), "
             f"got {value!r}"
         )
     return tx_mode
@@ -247,6 +253,237 @@ def resolve_auto_orientation_rotation_deg(
             f"orientation_elevation_deg is missing target orientation {target_orientation!r}"
         )
     return orientation_elevation_deg[target_token] - float(current_angle_deg)
+
+
+def get_axis_steps_per_degree(pos, logical_axis: str) -> float:
+    axis_name = str(logical_axis).strip().lower()
+    if axis_name == "azimuth":
+        return float(getattr(pos, "az_steps_per_deg", DEFAULT_AZIMUTH_STEPS_PER_DEG))
+    if axis_name == "elevation":
+        return float(getattr(pos, "el_steps_per_deg", DEFAULT_ELEVATION_STEPS_PER_DEG))
+    raise ValueError(f"Unsupported logical axis: {logical_axis!r}")
+
+
+def controller_steps_to_logical_axis_deg(
+    controller_steps: int,
+    *,
+    logical_axis: str,
+    steps_per_deg: float,
+    software_zero_offset_steps: int,
+) -> float:
+    axis_name = str(logical_axis).strip().lower()
+    logical_steps = int(controller_steps) - int(software_zero_offset_steps)
+    if axis_name == "azimuth":
+        return logical_steps / float(steps_per_deg)
+    if axis_name == "elevation":
+        return logical_steps / float(steps_per_deg)
+    raise ValueError(f"Unsupported logical axis: {logical_axis!r}")
+
+
+def read_positioner_startup_state(
+    pos,
+    *,
+    azimuth_software_zero_steps: int,
+    elevation_software_zero_steps: int,
+) -> dict:
+    azimuth_steps = pos.get_current_az_steps()
+    elevation_steps = pos.get_current_el_steps()
+    if azimuth_steps is None or elevation_steps is None:
+        raise RuntimeError("Could not read startup positioner encoder state")
+
+    azimuth_steps_per_deg = get_axis_steps_per_degree(pos, "azimuth")
+    elevation_steps_per_deg = get_axis_steps_per_degree(pos, "elevation")
+
+    return {
+        "azimuth_steps": int(azimuth_steps),
+        "elevation_steps": int(elevation_steps),
+        "azimuth_steps_per_deg": azimuth_steps_per_deg,
+        "elevation_steps_per_deg": elevation_steps_per_deg,
+        "azimuth_logical_deg": controller_steps_to_logical_axis_deg(
+            azimuth_steps,
+            logical_axis="azimuth",
+            steps_per_deg=azimuth_steps_per_deg,
+            software_zero_offset_steps=azimuth_software_zero_steps,
+        ),
+        "elevation_logical_deg": controller_steps_to_logical_axis_deg(
+            elevation_steps,
+            logical_axis="elevation",
+            steps_per_deg=elevation_steps_per_deg,
+            software_zero_offset_steps=elevation_software_zero_steps,
+        ),
+        "double_zero_reset_signature": int(azimuth_steps) == 0 and int(elevation_steps) == 0,
+    }
+
+
+def infer_auto_orientation_from_elevation(
+    current_angle_deg: float,
+    orientation_elevation_deg: dict[str, float],
+) -> tuple[str, float]:
+    if not orientation_elevation_deg:
+        raise ValueError("orientation_elevation_deg must not be empty")
+    return min(
+        orientation_elevation_deg.items(),
+        key=lambda item: (abs(float(item[1]) - float(current_angle_deg)), item[0]),
+    )
+
+
+def build_positioner_reset_message(
+    *,
+    azimuth_software_zero_steps: int,
+    elevation_software_zero_steps: int,
+) -> str:
+    return (
+        "Positioner controller appears reset after power cycle. "
+        "Both axes are at controller zero.\n\n"
+        "Azimuth should be at boresight for count 0 and elevation should be at elevation 0 for count 0.\n\n"
+        "If the positioner is already in the correct boresight and elevation positions, "
+        f"manually add a {azimuth_software_zero_steps} step azimuth offset and "
+        f"a {elevation_software_zero_steps} step elevation offset because those offset positions become the new software zeros. "
+        "This keeps true zero as a poweroff indicator.\n\n"
+        "You will also need to unstick both elevation and azimuth if recently powered on."
+    )
+
+
+def get_axis_controller_steps(pos, logical_axis: str) -> int | None:
+    axis_name = str(logical_axis).strip().lower()
+    if axis_name == "azimuth":
+        return pos.get_current_az_steps()
+    if axis_name == "elevation":
+        return pos.get_current_el_steps()
+    raise ValueError(f"Unsupported logical axis: {logical_axis!r}")
+
+
+def move_axis_by_startup_offset(
+    pos,
+    *,
+    logical_axis: str,
+    offset_steps: int,
+) -> dict:
+    axis_name = str(logical_axis).strip().lower()
+    before_steps = get_axis_controller_steps(pos, axis_name)
+    offset_deg = offset_steps / get_axis_steps_per_degree(pos, axis_name)
+    move_error = None
+
+    print(
+        f"[POS] Probing {axis_name} with startup offset: "
+        f"{offset_steps:+d} steps ({offset_deg:+.5f} deg)"
+    )
+    try:
+        if axis_name == "azimuth":
+            pos.go_azimuth(offset_deg)
+        elif axis_name == "elevation":
+            pos.go_elevation(offset_deg)
+        else:
+            raise ValueError(f"Unsupported logical axis: {logical_axis!r}")
+    except Exception as exc:
+        move_error = exc
+
+    after_steps = get_axis_controller_steps(pos, axis_name)
+    moved = (
+        before_steps is not None
+        and after_steps is not None
+        and int(after_steps) != int(before_steps)
+    )
+    if moved:
+        print(
+            f"[POS] {axis_name.title()} encoder changed: "
+            f"{before_steps} -> {after_steps} steps"
+        )
+    elif move_error is not None:
+        print(
+            f"[WARN] {axis_name.title()} probe raised before encoder change was seen: "
+            f"{move_error}"
+        )
+    else:
+        print(
+            f"[WARN] {axis_name.title()} encoder did not change during startup probe "
+            f"({before_steps} -> {after_steps})"
+        )
+
+    return {
+        "axis": axis_name,
+        "before_steps": None if before_steps is None else int(before_steps),
+        "after_steps": None if after_steps is None else int(after_steps),
+        "offset_steps": int(offset_steps),
+        "offset_deg": float(offset_deg),
+        "moved": moved,
+        "move_error": move_error,
+    }
+
+
+def unstick_axis_for_startup_recovery(pos, logical_axis: str) -> None:
+    unstick_axis = getattr(pos, "unstick_axis_without_motion", None)
+    if unstick_axis is None:
+        raise RuntimeError("Positioner driver does not support non-moving unstick recovery")
+    print(f"[POS] Applying non-moving unstick recovery on {logical_axis}")
+    unstick_axis(logical_axis)
+
+
+def recover_axis_from_controller_zero(
+    pos,
+    *,
+    logical_axis: str,
+    offset_steps: int,
+) -> dict:
+    first_attempt = move_axis_by_startup_offset(
+        pos,
+        logical_axis=logical_axis,
+        offset_steps=offset_steps,
+    )
+    if first_attempt["moved"]:
+        first_attempt["result"] = "offset_applied"
+        return first_attempt
+
+    unstick_axis_for_startup_recovery(pos, logical_axis)
+    second_attempt = move_axis_by_startup_offset(
+        pos,
+        logical_axis=logical_axis,
+        offset_steps=offset_steps,
+    )
+    second_attempt["initial_attempt"] = first_attempt
+    if second_attempt["moved"]:
+        second_attempt["result"] = "recovered_after_unstick"
+        return second_attempt
+
+    second_attempt["result"] = "still_stuck"
+    return second_attempt
+
+
+def build_startup_recovery_failure_message(
+    *,
+    base_message: str,
+    recovery_results: list[dict],
+) -> str:
+    lines = [base_message, "", "Startup recovery diagnostics:"]
+    for result in recovery_results:
+        axis_label = result["axis"].title()
+        if result["result"] == "still_stuck":
+            lines.append(
+                f"- {axis_label}: still at {result['after_steps']} steps after unstick and retry"
+            )
+        else:
+            lines.append(
+                f"- {axis_label}: moved to {result['after_steps']} steps ({result['result']})"
+            )
+    return "\n".join(lines)
+
+
+def release_positioner_for_startup_recovery(pos) -> bool:
+    close_positioner = getattr(pos, "close", None)
+    if close_positioner is None:
+        return False
+    print("[POS] Releasing positioner COM port for manual recovery")
+    close_positioner()
+    return True
+
+
+def reacquire_positioner_after_startup_recovery(pos) -> bool:
+    open_positioner = getattr(pos, "open", None)
+    if open_positioner is None:
+        return False
+    print("[POS] Reacquiring positioner COM port after manual recovery")
+    open_positioner()
+    return True
 
 
 def normalize_hendrix_ctx_level(value) -> str:
@@ -1260,9 +1497,15 @@ def fastmode_position_slot_to_angle(position_slot: int, max_angle_deg: float) ->
     raise ValueError(f"position_slot must be 1, 2, or 3; got {position_slot!r}")
 
 
-def infer_fastmode_position_slot(angle_deg: float, max_angle_deg: float) -> int:
+def infer_fastmode_position_slot(
+    angle_deg: float,
+    max_angle_deg: float,
+    *,
+    tolerance_deg: float | None = None,
+) -> int:
     magnitude = abs(float(max_angle_deg))
-    tolerance_deg = max(1e-6, magnitude * 1e-6)
+    if tolerance_deg is None:
+        tolerance_deg = max(1e-6, magnitude * 1e-6)
     if abs(angle_deg) <= tolerance_deg:
         return 2
     if abs(angle_deg - magnitude) <= tolerance_deg:
@@ -1278,6 +1521,41 @@ def resolve_fastmode_pattern_direction(position_slot: int, default_pattern_direc
     if position_slot == 1:
         return "ccw"
     return normalize_pattern_direction(default_pattern_direction)
+
+
+def enforce_minimum_signal_level_before_sweep(
+    *,
+    read_peak_once,
+    minimum_signal_dbm: float,
+    channel,
+    tx_freq: float,
+    antenna,
+    power_level,
+    active_dut_display: str = "",
+):
+    while True:
+        pk_f_hz, rx_dbm = read_peak_once()
+        peak_freq_text = (
+            f"{pk_f_hz / 1e6:.6f} MHz" if isinstance(pk_f_hz, (int, float)) else "unknown"
+        )
+        print(
+            "[RF CHECK] "
+            f"CH={channel} FREQ={tx_freq/1e6:.6f} MHz "
+            f"ANT={antenna} PWR={power_level} "
+            f"RX={rx_dbm:.2f} dBm Fpk={peak_freq_text}"
+        )
+        if rx_dbm >= float(minimum_signal_dbm):
+            return pk_f_hz, rx_dbm
+
+        prompt_manual_change(
+            "Signal level is too low to continue.\n"
+            f"Measured RX level is {rx_dbm:.2f} dBm, below the enforced minimum "
+            f"of {minimum_signal_dbm:.2f} dBm.\n"
+            "Check the DUT RF state, channel/power programming, cable/antenna path, "
+            "and whether the device has gone flat when not on USB.\n"
+            "After fixing it, press Enter so DAMspy can re-check before starting the sweep.",
+            active_dut_display=active_dut_display,
+        )
 
 
 def run_single_azimuth_sweep(
@@ -1318,6 +1596,7 @@ def run_single_azimuth_sweep(
     move_start_timeout_s: float = DEFAULT_FAST_MOVE_START_TIMEOUT_S,
     initial_position_deg: float = 0.0,
     return_to_boresight_after_sweep: bool = True,
+    active_dut_display: str = "",
 ):
     current_az = float(initial_position_deg)
     boresight_only = str(sweep_mode).strip().lower() == "boresight_only"
@@ -1527,6 +1806,16 @@ def run_single_azimuth_sweep(
         if callable(prepare_fast_peak_mode):
             print("[FAST] Preparing spectrum analyser fast instantaneous peak mode")
             prepare_fast_peak_mode()
+
+        enforce_minimum_signal_level_before_sweep(
+            read_peak_once=read_peak_once,
+            minimum_signal_dbm=ENFORCED_MIN_SIGNAL_DBM,
+            channel=channel,
+            tx_freq=tx_freq,
+            antenna=antenna,
+            power_level=power_level,
+            active_dut_display=active_dut_display,
+        )
 
         sample_index = 0
         floor_warning_emitted = False
@@ -1970,6 +2259,24 @@ def run(params, equip):
     move_start_timeout_s = float(
         params.get("move_start_timeout_s", DEFAULT_FAST_MOVE_START_TIMEOUT_S)
     )
+    azimuth_software_zero_steps = int(
+        params.get(
+            "azimuth_software_zero_steps",
+            DEFAULT_POSITIONER_SOFTWARE_ZERO_OFFSET_STEPS,
+        )
+    )
+    elevation_software_zero_steps = int(
+        params.get(
+            "elevation_software_zero_steps",
+            DEFAULT_POSITIONER_SOFTWARE_ZERO_OFFSET_STEPS,
+        )
+    )
+    position_slot_tolerance_steps = int(
+        params.get(
+            "position_slot_tolerance_steps",
+            DEFAULT_POSITION_SLOT_TOLERANCE_STEPS,
+        )
+    )
     orientations = ensure_list(params.get("orientations", ["unknown"]), "orientations")
     polarisations = ensure_list(params.get("polarisation", ["Unknown"]), "polarisation")
     orientation_tokens = [normalize_orientation_token(orientation) for orientation in orientations]
@@ -2038,6 +2345,11 @@ def run(params, equip):
         * len(rf_variants)
         * len(max_angle_values)
     )
+    startup_positioner_state = read_positioner_startup_state(
+        pos,
+        azimuth_software_zero_steps=azimuth_software_zero_steps,
+        elevation_software_zero_steps=elevation_software_zero_steps,
+    )
 
     print("[CFG] Parsed YAML parameters:")
     if active_dut_name:
@@ -2062,6 +2374,16 @@ def run(params, equip):
         print(f"      Orientation angles : {orientation_elevation_deg}")
     print(f"      Manual setup order : {manual_setup_order}")
     print(f"      Use WOYM          : {use_woym}")
+    print(
+        "      AZ startup state  : "
+        f"{startup_positioner_state['azimuth_steps']} steps "
+        f"({format_angle(startup_positioner_state['azimuth_logical_deg'])} logical)"
+    )
+    print(
+        "      EL startup state  : "
+        f"{startup_positioner_state['elevation_steps']} steps "
+        f"({format_angle(startup_positioner_state['elevation_logical_deg'])} logical)"
+    )
     print(f"      Device type        : {device_type}")
     if tx_mode is not None:
         print(f"      TX mode            : {tx_mode}")
@@ -2099,6 +2421,55 @@ def run(params, equip):
     print(f"      SA span            : {span_hz/1e3:.1f} kHz")
     print(f"      SA RBW             : {rbw_hz/1e3:.1f} kHz")
     print(f"      SA VBW             : {vbw_hz/1e3:.1f} kHz")
+
+    if startup_positioner_state["double_zero_reset_signature"]:
+        recovery_message = build_positioner_reset_message(
+            azimuth_software_zero_steps=azimuth_software_zero_steps,
+            elevation_software_zero_steps=elevation_software_zero_steps,
+        )
+        recovery_results = [
+            recover_axis_from_controller_zero(
+                pos,
+                logical_axis="azimuth",
+                offset_steps=azimuth_software_zero_steps,
+            ),
+            recover_axis_from_controller_zero(
+                pos,
+                logical_axis="elevation",
+                offset_steps=elevation_software_zero_steps,
+            ),
+        ]
+        positioner_port_released = release_positioner_for_startup_recovery(pos)
+        stuck_results = [result for result in recovery_results if result["result"] == "still_stuck"]
+        if stuck_results:
+            raise RuntimeError(
+                build_startup_recovery_failure_message(
+                    base_message=recovery_message,
+                    recovery_results=recovery_results,
+                )
+            )
+
+        prompt_manual_change(
+            "Positioner controller reset was detected and startup recovery completed.\n"
+            "Any axis that responded has been left at the small +10 step software-zero offset.\n"
+            "If the rig is not physically at azimuth boresight and elevation 0, adjust it now.\n"
+            "If it already looks correct, just confirm to continue.",
+            active_dut_display=active_dut_display,
+        )
+        if positioner_port_released and not reacquire_positioner_after_startup_recovery(pos):
+            raise RuntimeError("Positioner driver does not support reopen after release")
+        startup_positioner_state = read_positioner_startup_state(
+            pos,
+            azimuth_software_zero_steps=azimuth_software_zero_steps,
+            elevation_software_zero_steps=elevation_software_zero_steps,
+        )
+        print(
+            "[POS] Startup state after recovery confirmation: "
+            f"AZ {startup_positioner_state['azimuth_steps']} steps "
+            f"({format_angle(startup_positioner_state['azimuth_logical_deg'])} logical), "
+            f"EL {startup_positioner_state['elevation_steps']} steps "
+            f"({format_angle(startup_positioner_state['elevation_logical_deg'])} logical)"
+        )
 
     if use_woym:
         update_woym_generic(
@@ -2148,6 +2519,7 @@ def run(params, equip):
         current_channel = None
         current_power_level = None
         current_antenna = None
+        connected_rf_active = False
         bodyworn_rf_active = False
         bodyworn_manual_mode = False
         wireless_pro_rf_active = False
@@ -2156,20 +2528,27 @@ def run(params, equip):
         confirmed_orientation = None
         confirmed_polarisation = None
         current_orientation_angle_deg = None
-        current_position_deg = 0.0
-        current_position_slot = 2
+        starting_orientation_angle_deg = None
+        starting_orientation_name = None
+        current_position_deg = startup_positioner_state["azimuth_logical_deg"]
+        current_position_slot = None
 
         measurement_dir = os.path.join(outdir, "2_fast_meas_azimuth")
         os.makedirs(measurement_dir, exist_ok=True)
 
         if orientation_change_mode == "auto":
-            confirmed_orientation, current_orientation_angle_deg = prompt_current_auto_orientation(
+            current_orientation_angle_deg = startup_positioner_state["elevation_logical_deg"]
+            starting_orientation_angle_deg = current_orientation_angle_deg
+            confirmed_orientation, detected_target_angle_deg = infer_auto_orientation_from_elevation(
+                current_orientation_angle_deg,
                 orientation_elevation_deg,
-                active_dut_display=active_dut_display,
             )
+            starting_orientation_name = confirmed_orientation
             print(
-                "[AUTO] Starting orientation reference: "
-                f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+                "[AUTO] Detected starting orientation from elevation position: "
+                f"{confirmed_orientation} "
+                f"(measured {current_orientation_angle_deg:+.2f} deg, "
+                f"nearest configured {detected_target_angle_deg:+.0f} deg)"
             )
             if use_woym:
                 update_woym_generic(
@@ -2178,17 +2557,19 @@ def run(params, equip):
                     current_state={
                         "state": "configuring",
                         "message": (
-                            "Confirmed current auto orientation "
-                            f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+                            "Detected current auto orientation "
+                            f"{confirmed_orientation} "
+                            f"(measured {current_orientation_angle_deg:+.2f} deg)"
                         ),
                         "target": {
                             "orientation": confirmed_orientation,
-                            "elevation_deg": current_orientation_angle_deg,
+                            "elevation_deg": detected_target_angle_deg,
                         },
                     },
                     event=(
-                        "Confirmed current auto orientation "
-                        f"{confirmed_orientation} ({current_orientation_angle_deg:+.0f} deg)"
+                        "Detected current auto orientation "
+                        f"{confirmed_orientation} "
+                        f"(measured {current_orientation_angle_deg:+.2f} deg)"
                     ),
                 )
 
@@ -2824,12 +3205,19 @@ def run(params, equip):
                                 "[TX] WIRELESS-PRO-RX RF already on; "
                                 "reusing current RF state for this sweep"
                             )
+                        elif connected_rf_active:
+                            print(
+                                f"[TX] {device_type.upper()} RF already on; "
+                                "reusing current RF state for this sweep"
+                            )
                         else:
                             print(f"[TX] Starting {device_type.upper()} RF")
                             try:
                                 sg.rf_on()
                                 if device_type == "wireless-pro-rx":
                                     wireless_pro_rf_active = True
+                                else:
+                                    connected_rf_active = True
                             except Exception as e:
                                 if not activate_wirepro_manual_mode(
                                     antenna_label=antenna_label,
@@ -2868,27 +3256,34 @@ def run(params, equip):
                         effective_pattern_direction = pattern_direction
                         return_to_boresight_after_sweep = True
                         if fastmode_mode == "fast" and not boresight_only:
-                            if combo_index == 1:
-                                current_position_slot = prompt_fastmode_positioner_start(
-                                    max_angle_deg=maxa,
-                                    pattern_direction=pattern_direction,
-                                    active_dut_display=active_dut_display,
-                                )
-                            current_position_deg = fastmode_position_slot_to_angle(
-                                current_position_slot,
+                            current_position_slot = infer_fastmode_position_slot(
+                                current_position_deg,
                                 maxa,
+                                tolerance_deg=(
+                                    position_slot_tolerance_steps
+                                    / startup_positioner_state["azimuth_steps_per_deg"]
+                                ),
                             )
                             effective_pattern_direction = resolve_fastmode_pattern_direction(
                                 current_position_slot,
                                 pattern_direction,
                             )
                             return_to_boresight_after_sweep = False
-                            print(
-                                "[FASTMODE FAST] Remembered positioner state before sweep: "
-                                f"{current_position_slot} ({format_angle(current_position_deg)})"
-                            )
+                            if combo_index == 1:
+                                print(
+                                    "[FASTMODE FAST] Auto-detected positioner state before first sweep: "
+                                    f"{current_position_slot} ({format_angle(current_position_deg)})"
+                                )
+                            else:
+                                print(
+                                    "[FASTMODE FAST] Remembered positioner state before sweep: "
+                                    f"{current_position_slot} ({format_angle(current_position_deg)})"
+                                )
                         else:
-                            current_position_deg = 0.0
+                            if combo_index == 1:
+                                current_position_deg = startup_positioner_state["azimuth_logical_deg"]
+                            else:
+                                current_position_deg = 0.0
                             current_position_slot = 2
 
                         sweep_result = run_single_azimuth_sweep(
@@ -2928,6 +3323,7 @@ def run(params, equip):
                             move_start_timeout_s=move_start_timeout_s,
                             initial_position_deg=current_position_deg,
                             return_to_boresight_after_sweep=return_to_boresight_after_sweep,
+                            active_dut_display=active_dut_display,
                         )
                         if sweep_result is None:
                             if boresight_only or return_to_boresight_after_sweep:
@@ -2969,19 +3365,6 @@ def run(params, equip):
                                 "2_fast_meas_azimuth.run_single_azimuth_sweep",
                             )
                         raise
-                    finally:
-                        if not is_manual_rf_setup_mode and device_type != "wireless-pro-rx":
-                            if prompt_rf_stop_override(
-                                device_label=device_type.upper(),
-                                reason="End of sweep combination",
-                            ):
-                                print(f"[TX] Stopping {device_type.upper()} RF")
-                                sg.rf_off()
-                            else:
-                                print(
-                                    f"[TX] Leaving {device_type.upper()} RF/state "
-                                    "unchanged by operator request"
-                                )
     except SweepStoppedByUser as e:
         stopped_by_user = e
     except Exception as e:
@@ -3039,8 +3422,34 @@ def run(params, equip):
                             "by operator request"
                         )
                 wireless_pro_rf_active = False
+            if connected_rf_active:
+                print(f"[TX] Stopping {device_type.upper()} RF before shutdown")
+                sg.rf_off()
+                connected_rf_active = False
         except Exception as e:
             cleanup_error = e
+
+        try:
+            if (
+                orientation_change_mode == "auto"
+                and current_orientation_angle_deg is not None
+                and starting_orientation_angle_deg is not None
+            ):
+                return_rotation_deg = (
+                    float(starting_orientation_angle_deg) - float(current_orientation_angle_deg)
+                )
+                if abs(return_rotation_deg) >= 1e-9:
+                    print(
+                        "[AUTO] Returning elevation plate to starting orientation: "
+                        f"{confirmed_orientation} -> {starting_orientation_name} "
+                        f"({return_rotation_deg:+.0f} deg)"
+                    )
+                    pos.go_elevation(return_rotation_deg)
+                    current_orientation_angle_deg = starting_orientation_angle_deg
+                    confirmed_orientation = starting_orientation_name
+        except Exception as e:
+            if cleanup_error is None:
+                cleanup_error = e
 
         try:
             sg.close()
