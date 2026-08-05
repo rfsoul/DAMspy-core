@@ -50,6 +50,41 @@ class BB60Spike:
         self._query("*OPC?")
 
     @staticmethod
+    def _parse_trace_amps(raw: str) -> list[float]:
+        amps = []
+        invalid_tokens = []
+
+        for idx, token in enumerate(raw.split(",")):
+            value = token.strip()
+            if not value:
+                continue
+            try:
+                parsed = float(value)
+            except ValueError:
+                amps.append(float("-inf"))
+                invalid_tokens.append((idx, value))
+                continue
+            if math.isnan(parsed):
+                amps.append(float("-inf"))
+                invalid_tokens.append((idx, value))
+                continue
+            amps.append(parsed)
+
+        if not amps:
+            raise RuntimeError("Empty trace from Spike")
+
+        if len(invalid_tokens) == len(amps):
+            sample_tokens = ", ".join(
+                f"{index}:{token!r}" for index, token in invalid_tokens[:5]
+            )
+            raise RuntimeError(
+                "Spike trace contained no numeric amplitude samples "
+                f"(examples: {sample_tokens})"
+            )
+
+        return amps
+
+    @staticmethod
     def _close_enough(actual: float, expected: float, tol: float = 1.0) -> bool:
         return abs(actual - expected) <= tol
 
@@ -388,10 +423,7 @@ class BB60Spike:
         self._query("*OPC?")
 
         raw = self._query(":TRAC:DATA?")
-        amps = [float(x) for x in raw.split(",") if x]
-
-        if not amps:
-            raise RuntimeError("Empty trace from Spike")
+        amps = self._parse_trace_amps(raw)
 
         peak_idx = max(range(len(amps)), key=lambda i: amps[i])
         peak_dbm = amps[peak_idx]

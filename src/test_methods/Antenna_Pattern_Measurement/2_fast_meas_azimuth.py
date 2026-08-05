@@ -3205,6 +3205,12 @@ def run(params, equip):
                                 "[TX] WIRELESS-PRO-RX RF already on; "
                                 "reusing current RF state for this sweep"
                             )
+                        elif connected_rf_active and config_change_required:
+                            print(
+                                f"[TX] Reapplying {device_type.upper()} RF settings "
+                                "for changed sweep variant"
+                            )
+                            sg.rf_on()
                         elif connected_rf_active:
                             print(
                                 f"[TX] {device_type.upper()} RF already on; "

@@ -411,7 +411,8 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertTrue(
             all(call["return_to_boresight_after_sweep"] is False for call in sweep_calls)
         )
-        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.channels, [7, 8])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
 
     def test_run_fastmode_fast_detects_negative_extreme_from_positioner(self):
@@ -484,7 +485,8 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
         self.assertTrue(
             all(call["return_to_boresight_after_sweep"] is True for call in sweep_calls)
         )
-        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.channels, [7, 8])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
 
     def test_run_rxcc_usb_disconnected_uses_usb_update_flow(self):
@@ -651,7 +653,9 @@ class FastMeasAzimuthRunTests(unittest.TestCase):
                  mock.patch("sys.stdout", new=io.StringIO()):
                 fast_meas_azimuth.run(params, equip)
 
-        self.assertEqual(equip.signal_generator.rf_on_calls, 1)
+        self.assertEqual(equip.signal_generator.channels, [7, 8])
+        self.assertEqual(equip.signal_generator.power_levels, [10])
+        self.assertEqual(equip.signal_generator.rf_on_calls, 2)
         self.assertEqual(equip.signal_generator.rf_off_calls, 1)
 
     def test_run_auto_orientation_returns_elevation_to_starting_position(self):
